@@ -8,7 +8,7 @@ import { mulberry32 } from "../fairness/prng";
  * so a replay is guaranteed to look identical to what happened live.
  */
 
-export const RACE_DURATION_MS = 16_000;
+export const RACE_DURATION_MS = 60_000;
 
 export interface RacePosition {
   teamId: string;
