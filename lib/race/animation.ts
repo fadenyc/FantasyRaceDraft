@@ -23,9 +23,19 @@ function clamp01(n: number): number {
   return Math.min(1, Math.max(0, n));
 }
 
+/**
+ * Decelerating, but blended with a small linear term so a racer never looks
+ * frozen right before finishing. Pure cubic ease-out's tail is nearly flat
+ * (its derivative approaches 0), and since the last-place racer's own
+ * finish time lines up with the very end of the whole race, that flat tail
+ * is exactly what viewers are staring at during the race's climax — it
+ * reads as "stuck," not "almost done." The linear floor keeps it visibly
+ * moving the whole way in.
+ */
 function easeOutCubic(t: number): number {
   const clamped = clamp01(t);
-  return 1 - (1 - clamped) ** 3;
+  const eased = 1 - (1 - clamped) ** 3;
+  return eased * 0.8 + clamped * 0.2;
 }
 
 interface NoiseParams {

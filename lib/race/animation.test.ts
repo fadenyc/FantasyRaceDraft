@@ -43,4 +43,26 @@ describe("computeRacePositions", () => {
     expect(firstPick.finished).toBe(true);
     expect(lastPick.finished).toBe(false);
   });
+
+  it("a racer's progress keeps advancing noticeably right up until it finishes (never looks frozen)", () => {
+    // Regression test: a pure ease-out curve's tail is nearly flat, and since
+    // the last-place racer's own finish time lines up with the very end of
+    // the whole race, a flat tail there reads as "stuck" during the race's
+    // climax. Sample the last-place racer's own final 10% of its timeline
+    // and confirm it's still visibly moving, not just crawling.
+    const lastRank = finalOrder.length - 1;
+    const finishTime = RACE_DURATION_MS; // last-place racer's finish time == full race duration
+    const tenPercentBeforeFinish = finishTime * 0.9;
+
+    const earlier = computeRacePositions(42, finalOrder, tenPercentBeforeFinish).find(
+      (p) => p.rank === lastRank,
+    )!;
+    const later = computeRacePositions(42, finalOrder, finishTime - 50).find(
+      (p) => p.rank === lastRank,
+    )!;
+
+    // Over that last stretch, progress should still move by a meaningful
+    // amount — not the near-zero delta a pure cubic ease-out tail would give.
+    expect(later.progress - earlier.progress).toBeGreaterThan(0.02);
+  });
 });
