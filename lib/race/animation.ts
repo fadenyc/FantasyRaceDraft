@@ -1,103 +1,82 @@
-import { mulberry32 } from "../fairness/prng";
+import { buildRaceProfileSet, DEFAULT_RACE_CONFIG, type RaceConfig, type RaceProfileSet } from "./profile";
 
-/**
- * Pure animation logic shared by the live race view and the replay view.
- * The only difference between "live" and "replay" is where `elapsedMs`
- * comes from (see components/race/useElapsedClock.ts) — the actual
- * positions are always a pure function of (seed, finalOrder, elapsedMs),
- * so a replay is guaranteed to look identical to what happened live.
- */
-
-export const RACE_DURATION_MS = 60_000;
+export const RACE_DURATION_MS = DEFAULT_RACE_CONFIG.durationMs;
 
 export interface RacePosition {
   teamId: string;
-  /** 0..1 along the track. 1 = crossed the finish line. */
+  /** 0..1 along the track. */
   progress: number;
+  /** Position units per ms — drives lean/bob/streak/sprite-cadence effects, not display. */
+  velocity: number;
   finished: boolean;
-  /** 0-indexed final rank; 0 = 1st pick. */
-  rank: number;
 }
 
-function clamp01(n: number): number {
-  return Math.min(1, Math.max(0, n));
-}
+// Rebuilding a profile set is cheap (a few hundred float ops per runner),
+// but there's no reason to redo it on every sample when the same
+// seed+order gets queried repeatedly — a render loop calling this every
+// frame, or a test looping over t. Small bounded cache, not a perf
+// requirement so much as "don't do pointless work."
+const profileCache = new Map<string, RaceProfileSet>();
+const PROFILE_CACHE_LIMIT = 8;
 
-/**
- * Decelerating, but blended with a small linear term so a racer never looks
- * frozen right before finishing. Pure cubic ease-out's tail is nearly flat
- * (its derivative approaches 0), and since the last-place racer's own
- * finish time lines up with the very end of the whole race, that flat tail
- * is exactly what viewers are staring at during the race's climax — it
- * reads as "stuck," not "almost done." The linear floor keeps it visibly
- * moving the whole way in.
- */
-function easeOutCubic(t: number): number {
-  const clamped = clamp01(t);
-  const eased = 1 - (1 - clamped) ** 3;
-  return eased * 0.8 + clamped * 0.2;
-}
-
-interface NoiseParams {
-  freq1: number;
-  freq2: number;
-  phase1: number;
-  phase2: number;
-  amplitude: number;
-}
-
-/** Deterministic per-racer wobble parameters, derived once from the seed + rank. */
-function racerNoiseParams(seed: number, rank: number): NoiseParams {
-  const rng = mulberry32((seed + rank * 1_000_003) >>> 0);
-  return {
-    freq1: 0.0025 + rng() * 0.003,
-    freq2: 0.005 + rng() * 0.004,
-    phase1: rng() * Math.PI * 2,
-    phase2: rng() * Math.PI * 2,
-    amplitude: 0.03 + rng() * 0.05,
-  };
-}
-
-/** Every racer's finish time is staggered across the back half of the race for suspense. */
-function finishTimeForRank(rank: number, teamCount: number): number {
-  if (teamCount <= 1) return RACE_DURATION_MS * 0.5;
-  return RACE_DURATION_MS * (0.5 + 0.5 * (rank / (teamCount - 1)));
+function getProfileSet(seed: number, finalOrder: readonly string[]): RaceProfileSet {
+  const key = `${seed}:${finalOrder.join(",")}`;
+  let set = profileCache.get(key);
+  if (!set) {
+    set = buildRaceProfileSet(seed, finalOrder);
+    profileCache.set(key, set);
+    if (profileCache.size > PROFILE_CACHE_LIMIT) {
+      const oldestKey = profileCache.keys().next().value;
+      if (oldestKey !== undefined) profileCache.delete(oldestKey);
+    }
+  }
+  return set;
 }
 
 /**
- * Given the revealed seed, the final draft order (index 0 = 1st pick),
- * and elapsed time in ms, returns every racer's current track position.
- * Deterministic: same inputs always produce the same output, in Node or
- * any browser.
+ * Given the revealed seed, the final draft order (index 0 = 1st pick), and
+ * elapsed time in ms, returns every racer's current position. Deterministic:
+ * same inputs always produce the same output, in Node or any browser — so
+ * live viewers and a later replay render identically, and a client that
+ * resyncs after being backgrounded just resamples at the new elapsed time
+ * with no drift.
+ *
+ * Deliberately does NOT return each runner's predetermined finish rank —
+ * only `progress` and `finished`. The order teams actually finish in is an
+ * emergent property of the profile curves (see lib/race/profile.ts), not a
+ * value read off `finalOrder` early. Callers derive standings by sorting
+ * `progress` (see computeLiveStandings) so the UI can never leak the
+ * predetermined order before a runner has actually crossed the line.
  */
 export function computeRacePositions(
   seed: number,
   finalOrder: readonly string[],
   elapsedMs: number,
 ): RacePosition[] {
+  const { runners } = getProfileSet(seed, finalOrder);
   const t = Math.max(0, elapsedMs);
-  const teamCount = finalOrder.length;
 
-  return finalOrder.map((teamId, rank) => {
-    const finishTime = finishTimeForRank(rank, teamCount);
-    const finished = t >= finishTime;
-
-    if (finished) {
-      return { teamId, progress: 1, finished: true, rank };
-    }
-
-    const params = racerNoiseParams(seed, rank);
-    const decay = 1 - t / finishTime; // 1 at start, 0 right at the finish
-    const wave =
-      Math.sin(t * params.freq1 + params.phase1) * 0.6 +
-      Math.sin(t * params.freq2 + params.phase2) * 0.4;
-    const jitter = wave * params.amplitude * decay;
-    const progress = clamp01(easeOutCubic(t / finishTime) + jitter);
-
-    return { teamId, progress, finished: false, rank };
+  return runners.map((runner) => {
+    const { position, velocity } = runner.sample(t);
+    return {
+      teamId: runner.teamId,
+      progress: position,
+      velocity,
+      finished: t >= runner.finishTimeMs,
+    };
   });
 }
 
 export function isRaceComplete(elapsedMs: number): boolean {
   return elapsedMs >= RACE_DURATION_MS;
 }
+
+/** Current standings a viewer would actually see, sorted by live position — never reads the predetermined order. */
+export function computeLiveStandings(positions: readonly RacePosition[]): string[] {
+  return positions
+    .slice()
+    .sort((a, b) => b.progress - a.progress)
+    .map((p) => p.teamId);
+}
+
+export type { RaceConfig };

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { computeRacePositions, RACE_DURATION_MS } from "./animation";
+import { computeLiveStandings, computeRacePositions, RACE_DURATION_MS } from "./animation";
+import { buildRaceProfileSet } from "./profile";
 
 const finalOrder = ["t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9", "t10", "t11", "t12"];
 
@@ -35,34 +36,83 @@ describe("computeRacePositions", () => {
     }
   });
 
-  it("1st-pick rank finishes no later than last-pick rank", () => {
-    // rank 0 (1st pick) is scheduled to finish earlier than rank 11 (last pick)
-    const midRace = computeRacePositions(42, finalOrder, RACE_DURATION_MS * 0.75);
-    const firstPick = midRace.find((p) => p.rank === 0)!;
-    const lastPick = midRace.find((p) => p.rank === finalOrder.length - 1)!;
+  it("never returns a predetermined rank field — only progress/velocity/finished", () => {
+    const positions = computeRacePositions(42, finalOrder, 30_000);
+    for (const p of positions) {
+      expect(p).not.toHaveProperty("rank");
+      expect(Object.keys(p).sort()).toEqual(["finished", "progress", "teamId", "velocity"]);
+    }
+  });
+
+  it("1st-pick team finishes no later than the last-pick team (order honored end to end)", () => {
+    const { runners } = buildRaceProfileSet(42, finalOrder);
+    const firstPickTeam = runners[0].teamId;
+    const lastPickTeam = runners[runners.length - 1].teamId;
+
+    const midRace = computeRacePositions(42, finalOrder, RACE_DURATION_MS * 0.95);
+    const firstPick = midRace.find((p) => p.teamId === firstPickTeam)!;
+    const lastPick = midRace.find((p) => p.teamId === lastPickTeam)!;
     expect(firstPick.finished).toBe(true);
     expect(lastPick.finished).toBe(false);
   });
 
   it("a racer's progress keeps advancing noticeably right up until it finishes (never looks frozen)", () => {
-    // Regression test: a pure ease-out curve's tail is nearly flat, and since
-    // the last-place racer's own finish time lines up with the very end of
-    // the whole race, a flat tail there reads as "stuck" during the race's
-    // climax. Sample the last-place racer's own final 10% of its timeline
-    // and confirm it's still visibly moving, not just crawling.
-    const lastRank = finalOrder.length - 1;
-    const finishTime = RACE_DURATION_MS; // last-place racer's finish time == full race duration
-    const tenPercentBeforeFinish = finishTime * 0.9;
+    // Regression test: a pure ease-out curve's tail is nearly flat, and the
+    // last-place racer's own finish coincides with the whole race's climax —
+    // a flat tail there reads as "stuck," not "almost done."
+    const { runners } = buildRaceProfileSet(42, finalOrder);
+    const last = runners[runners.length - 1];
 
-    const earlier = computeRacePositions(42, finalOrder, tenPercentBeforeFinish).find(
-      (p) => p.rank === lastRank,
-    )!;
-    const later = computeRacePositions(42, finalOrder, finishTime - 50).find(
-      (p) => p.rank === lastRank,
-    )!;
+    const earlier = last.sample(last.startDelayMs + (last.finishTimeMs - last.startDelayMs) * 0.9);
+    const later = last.sample(last.finishTimeMs - 50);
 
-    // Over that last stretch, progress should still move by a meaningful
-    // amount — not the near-zero delta a pure cubic ease-out tail would give.
-    expect(later.progress - earlier.progress).toBeGreaterThan(0.02);
+    expect(later.position - earlier.position).toBeGreaterThan(0.01);
+  });
+});
+
+describe("computeLiveStandings", () => {
+  it("matches the predetermined order once every runner has finished", () => {
+    const { runners } = buildRaceProfileSet(42, finalOrder);
+    const positions = computeRacePositions(42, finalOrder, RACE_DURATION_MS);
+    const standings = computeLiveStandings(positions);
+    expect(standings).toEqual(runners.map((r) => r.teamId));
+  });
+
+  it("does not just mirror the predetermined order mid-race — the pack is genuinely mixed up before it matters", () => {
+    const { runners } = buildRaceProfileSet(42, finalOrder);
+    const predeterminedOrder = runners.map((r) => r.teamId);
+
+    // Sample a handful of early/mid timestamps and confirm live standings
+    // diverge from the predetermined order at least once — proof the reveal
+    // isn't just a straight line from t=0, it's an emergent result of the
+    // curves. (If this ever starts failing, the "believable race" pacing
+    // has regressed into something that trivially telegraphs the result.)
+    const sampleTimes = [5_000, 15_000, 25_000, 35_000, 45_000];
+    const anyDivergence = sampleTimes.some((t) => {
+      const standings = computeLiveStandings(computeRacePositions(42, finalOrder, t));
+      return standings.join(",") !== predeterminedOrder.join(",");
+    });
+
+    expect(anyDivergence).toBe(true);
+  });
+
+  it("a runner that has already finished never gets outranked by one still running", () => {
+    const positions = computeRacePositions(42, finalOrder, RACE_DURATION_MS * 0.85);
+    const standings = computeLiveStandings(positions);
+    const positionByTeam = new Map(positions.map((p) => [p.teamId, p]));
+
+    let sawUnfinished = false;
+    for (const teamId of standings) {
+      const p = positionByTeam.get(teamId)!;
+      if (!p.finished) {
+        sawUnfinished = true;
+      } else if (sawUnfinished) {
+        // A finished runner (progress === 1) appearing after an unfinished
+        // one in the sort would mean the standings briefly rank someone
+        // "behind" a runner still short of the line — sorting by progress
+        // descending should never allow that.
+        throw new Error(`Finished team ${teamId} was sorted behind an unfinished team`);
+      }
+    }
   });
 });

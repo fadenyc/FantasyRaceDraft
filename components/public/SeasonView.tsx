@@ -6,7 +6,7 @@ import { createBrowserClient } from "@/lib/supabase/client";
 import { RaceCanvas } from "@/components/race/RaceCanvas";
 import { RaceResultsTable } from "@/components/race/RaceResultsTable";
 import { FloatingEmojiOverlay, type EmojiBurst } from "@/components/race/FloatingEmoji";
-import { useElapsedClock, type ClockMode } from "@/components/race/useElapsedClock";
+import type { ClockMode } from "@/components/race/raceClockMode";
 import { TeamPicker } from "@/components/join/TeamPicker";
 import { useClientToken } from "@/components/join/useClientToken";
 import { FairnessExplainer } from "@/components/shared/FairnessExplainer";
@@ -40,6 +40,7 @@ export function SeasonView({ publicToken, initialSeason, initialTeams, initialCl
   const [claimError, setClaimError] = useState<string | null>(null);
   const [cheerPulses, setCheerPulses] = useState<Record<string, number>>({});
   const [floaters, setFloaters] = useState<EmojiBurst[]>([]);
+  const [raceComplete, setRaceComplete] = useState(false);
   const clientToken = useClientToken(publicToken);
   const broadcastChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
 
@@ -165,7 +166,6 @@ export function SeasonView({ publicToken, initialSeason, initialTeams, initialCl
     season.status === "revealed" && season.revealed_at
       ? { mode: "live", raceStartAt: season.revealed_at }
       : { mode: "idle" };
-  const { elapsedMs, complete } = useElapsedClock(clockMode);
 
   const raceIsShowing = season.status === "revealed" && season.final_order && season.reveal_seed_uint32 !== null;
 
@@ -192,8 +192,9 @@ export function SeasonView({ publicToken, initialSeason, initialTeams, initialCl
               teams={teams}
               finalOrder={season.final_order as string[]}
               seed={season.reveal_seed_uint32 as number}
-              elapsedMs={elapsedMs}
+              mode={clockMode}
               cheerPulses={cheerPulses}
+              onComplete={() => setRaceComplete(true)}
             />
             <FloatingEmojiOverlay bursts={floaters} onComplete={removeFloater} />
           </div>
@@ -209,7 +210,7 @@ export function SeasonView({ publicToken, initialSeason, initialTeams, initialCl
               </button>
             ))}
           </div>
-          {complete && (
+          {raceComplete && (
             <div>
               <h2 className="mb-2 font-display text-2xl tracking-wide text-chalk">Final draft order</h2>
               <RaceResultsTable finalOrder={season.final_order as string[]} teamNameById={teamNameById} />
