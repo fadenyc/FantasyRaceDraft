@@ -1,0 +1,95 @@
+@import "tailwindcss";
+
+:root {
+  /* Dark turf palette — this is the app's committed look, not an OS-driven toggle. */
+  --color-turf-950: #05100a;
+  --color-turf-900: #0a1a10;
+  --color-turf-800: #12261a;
+  --color-turf-700: #1c3a26;
+  --color-turf-600: #285337;
+  --color-field-500: #35a35a;
+  --color-field-400: #4fc975;
+
+  --color-chalk: #f4f7f2;
+  --color-chalk-muted: #a9beb0;
+  --color-chalk-faint: #6d8477;
+
+  --color-endzone-600: #e8480f;
+  --color-endzone-500: #ff5a1f;
+  --color-endzone-400: #ff7a45;
+
+  --color-gold-500: #f4c430;
+}
+
+@theme inline {
+  --color-turf-950: var(--color-turf-950);
+  --color-turf-900: var(--color-turf-900);
+  --color-turf-800: var(--color-turf-800);
+  --color-turf-700: var(--color-turf-700);
+  --color-turf-600: var(--color-turf-600);
+  --color-field-500: var(--color-field-500);
+  --color-field-400: var(--color-field-400);
+  --color-chalk: var(--color-chalk);
+  --color-chalk-muted: var(--color-chalk-muted);
+  --color-chalk-faint: var(--color-chalk-faint);
+  --color-endzone-600: var(--color-endzone-600);
+  --color-endzone-500: var(--color-endzone-500);
+  --color-endzone-400: var(--color-endzone-400);
+  --color-gold-500: var(--color-gold-500);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --font-display: var(--font-anton);
+}
+
+/*
+ * Tailwind's Preflight reset sets `button { cursor: default }`. iOS Safari
+ * uses cursor:pointer as one of the signals that decides whether an element
+ * is "clickable" — without it, a button that also has :hover styles can
+ * need a second tap (the first only triggers :hover) before onClick fires.
+ * This restores the native expectation so every button responds on the
+ * first tap on iOS.
+ */
+button:not(:disabled) {
+  cursor: pointer;
+}
+
+/*
+ * Without this, iOS Safari can interpret a quick second tap on the same
+ * spot (e.g. retrying a tap that appeared to do nothing) as a
+ * double-tap-to-zoom gesture instead of two clicks. `manipulation` tells
+ * it this element handles its own taps, so it never falls back to the
+ * page zoom gesture here.
+ */
+button,
+a {
+  touch-action: manipulation;
+}
+
+body {
+  background-color: var(--color-turf-950);
+  background-image:
+    radial-gradient(ellipse 900px 650px at 10% -15%, color-mix(in srgb, var(--color-field-500) 30%, transparent), transparent),
+    radial-gradient(ellipse 800px 550px at 110% 10%, color-mix(in srgb, var(--color-endzone-500) 22%, transparent), transparent),
+    radial-gradient(ellipse 700px 500px at 50% 120%, color-mix(in srgb, var(--color-field-500) 18%, transparent), transparent);
+  background-repeat: no-repeat;
+  color: var(--color-chalk);
+}
+
+@keyframes float-up {
+  0% {
+    transform: translateY(0) scale(0.8);
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+    transform: translateY(-16px) scale(1);
+  }
+  100% {
+    transform: translateY(-220px) scale(1.15);
+    opacity: 0;
+  }
+}
+
+.animate-float-up {
+  animation: float-up 2.2s ease-out forwards;
+}
