@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { computeLiveStandings, computeRacePositions, RACE_DURATION_MS } from "@/lib/race/animation";
+import { PLAYER_SHEETS, SHEET_FRAME_COUNT } from "@/lib/race/playerSprites";
 import { useReducedMotion } from "./useReducedMotion";
 import type { ClockMode } from "./raceClockMode";
 
@@ -18,25 +19,6 @@ function ordinal(rank: number): string {
   return ORDINALS[rank - 1] ?? `${rank}th`;
 }
 
-// One character sprite sheet per lane, assigned by lane position (not by
-// finish rank) so each team keeps the same runner for the whole race.
-const PLAYER_SHEETS = [
-  "/images/players/team01-alpha-sheet.png",
-  "/images/players/team02-bravo-sheet.png",
-  "/images/players/team03-charlie-sheet.png",
-  "/images/players/team04-delta-sheet.png",
-  "/images/players/team05-echo-sheet.png",
-  "/images/players/team06-foxtrot-sheet.png",
-  "/images/players/team07-golf-sheet.png",
-  "/images/players/team08-hotel-sheet.png",
-  "/images/players/team09-india-sheet.png",
-  "/images/players/team10-juliett-sheet.png",
-  "/images/players/team11-kilo-sheet.png",
-  "/images/players/team12-lima-sheet.png",
-];
-
-// From the pack's manifest.json: 6 frames, 512px each, laid out horizontally.
-const SHEET_FRAME_COUNT = 6;
 const CONTACT_FRAME = 0;
 const RECOVERY_FRAME = 5;
 

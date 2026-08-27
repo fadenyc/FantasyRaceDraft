@@ -36,3 +36,12 @@ export interface Claim {
   client_token: string;
   claimed_at: string;
 }
+
+export interface ChatMessage {
+  id: string;
+  season_id: string;
+  client_token: string;
+  team_id: string | null;
+  body: string;
+  created_at: string;
+}

@@ -1,6 +1,8 @@
 import "server-only";
 import { createServiceRoleClient } from "../supabase/server";
-import type { Claim, PublicSeason, Team } from "./types";
+import type { ChatMessage, Claim, PublicSeason, Team } from "./types";
+
+const CHAT_HISTORY_LIMIT = 100;
 
 /**
  * All public-facing reads go through the `public_seasons` view — even
@@ -58,4 +60,18 @@ export async function getSeasonBundleByPublicToken(
     teams: (teams ?? []) as Team[],
     claims: (claims ?? []) as Claim[],
   };
+}
+
+/** Most recent chat messages for a season, oldest first (ready to render top-to-bottom). */
+export async function getChatMessages(seasonId: string): Promise<ChatMessage[]> {
+  const supabase = createServiceRoleClient();
+  const { data, error } = await supabase
+    .from("chat_messages")
+    .select("*")
+    .eq("season_id", seasonId)
+    .order("created_at", { ascending: false })
+    .limit(CHAT_HISTORY_LIMIT);
+
+  if (error) throw error;
+  return ((data ?? []) as ChatMessage[]).reverse();
 }

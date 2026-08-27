@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Claim, PublicSeason, Team } from "@/lib/db/types";
+import type { ChatMessage, Claim, PublicSeason, Team } from "@/lib/db/types";
 import { createBrowserClient } from "@/lib/supabase/client";
 import { RaceCanvas } from "@/components/race/RaceCanvas";
 import { RaceResultsTable } from "@/components/race/RaceResultsTable";
@@ -13,12 +13,14 @@ import { FairnessExplainer } from "@/components/shared/FairnessExplainer";
 import { PresenceAvatars } from "@/components/shared/PresenceAvatars";
 import { usePresence } from "@/components/shared/usePresence";
 import { Countdown } from "@/components/shared/Countdown";
+import { ChatPanel } from "@/components/chat/ChatPanel";
 
 interface SeasonViewProps {
   publicToken: string;
   initialSeason: PublicSeason;
   initialTeams: Team[];
   initialClaims: Claim[];
+  initialMessages: ChatMessage[];
 }
 
 interface RaceStartPayload {
@@ -32,7 +34,13 @@ function randomCheerEmoji(): string {
   return CHEER_EMOJIS[Math.floor(Math.random() * CHEER_EMOJIS.length)];
 }
 
-export function SeasonView({ publicToken, initialSeason, initialTeams, initialClaims }: SeasonViewProps) {
+export function SeasonView({
+  publicToken,
+  initialSeason,
+  initialTeams,
+  initialClaims,
+  initialMessages,
+}: SeasonViewProps) {
   const [supabase] = useState(() => createBrowserClient());
   const [season, setSeason] = useState(initialSeason);
   const [claims, setClaims] = useState<Claim[]>(initialClaims);
@@ -169,9 +177,12 @@ export function SeasonView({ publicToken, initialSeason, initialTeams, initialCl
 
   const raceIsShowing = season.status === "revealed" && season.final_order && season.reveal_seed_uint32 !== null;
 
+  // The waiting room gets extra width for the chat sidebar; the race view
+  // and everything else stays at the narrower column that's already tuned
+  // for them, via the inner max-w-2xl wrapper below.
   return (
-    <div className="mx-auto flex w-full min-w-0 max-w-2xl flex-col gap-6 p-6">
-      <div className="flex flex-col gap-2">
+    <div className={`mx-auto flex w-full min-w-0 flex-col gap-6 p-6 ${raceIsShowing ? "max-w-2xl" : "max-w-5xl"}`}>
+      <div className="mx-auto flex w-full max-w-2xl flex-col gap-2">
         <h1 className="font-display text-4xl tracking-wide text-chalk">{season.name}</h1>
         {season.scheduled_at && (
           <p className="text-sm text-chalk-muted">
@@ -182,7 +193,9 @@ export function SeasonView({ publicToken, initialSeason, initialTeams, initialCl
       </div>
 
       {!raceIsShowing && season.scheduled_at && (
-        <Countdown targetIso={season.scheduled_at} committed={season.status !== "setup"} />
+        <div className="mx-auto w-full max-w-2xl">
+          <Countdown targetIso={season.scheduled_at} committed={season.status !== "setup"} />
+        </div>
       )}
 
       {raceIsShowing ? (
@@ -218,25 +231,38 @@ export function SeasonView({ publicToken, initialSeason, initialTeams, initialCl
           )}
         </div>
       ) : (
-        <div className="flex flex-col gap-2">
-          <TeamPicker
-            teams={teams}
-            claimedTeamIds={claimedTeamIds}
-            myTeamId={myTeamId}
-            onClaim={claimTeam}
-            onRelease={releaseClaim}
-            busy={busy}
-          />
-          {claimError && <p className="text-sm text-endzone-400">{claimError}</p>}
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
+          <div className="flex min-w-0 flex-1 flex-col gap-2">
+            <TeamPicker
+              teams={teams}
+              claimedTeamIds={claimedTeamIds}
+              myTeamId={myTeamId}
+              onClaim={claimTeam}
+              onRelease={releaseClaim}
+              busy={busy}
+            />
+            {claimError && <p className="text-sm text-endzone-400">{claimError}</p>}
+          </div>
+          <div className="w-full lg:w-80 lg:shrink-0">
+            <ChatPanel
+              publicToken={publicToken}
+              seasonId={season.id}
+              teams={teams}
+              initialMessages={initialMessages}
+              clientToken={clientToken}
+            />
+          </div>
         </div>
       )}
 
-      <FairnessExplainer
-        commitmentHash={season.commitment_hash}
-        commitmentPublishedAt={season.commitment_published_at}
-        serverSeed={season.status === "revealed" ? season.server_seed : null}
-        revealSeedUint32={season.reveal_seed_uint32}
-      />
+      <div className="mx-auto w-full max-w-2xl">
+        <FairnessExplainer
+          commitmentHash={season.commitment_hash}
+          commitmentPublishedAt={season.commitment_published_at}
+          serverSeed={season.status === "revealed" ? season.server_seed : null}
+          revealSeedUint32={season.reveal_seed_uint32}
+        />
+      </div>
     </div>
   );
 }

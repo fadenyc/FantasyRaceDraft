@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { getSeasonBundleByPublicToken } from "@/lib/db/queries";
+import { getChatMessages, getSeasonBundleByPublicToken } from "@/lib/db/queries";
 import { SeasonView } from "@/components/public/SeasonView";
 
 export const dynamic = "force-dynamic";
@@ -14,12 +14,15 @@ export default async function PublicSeasonPage({
 
   if (!bundle) notFound();
 
+  const initialMessages = await getChatMessages(bundle.season.id);
+
   return (
     <SeasonView
       publicToken={publicToken}
       initialSeason={bundle.season}
       initialTeams={bundle.teams}
       initialClaims={bundle.claims}
+      initialMessages={initialMessages}
     />
   );
 }
