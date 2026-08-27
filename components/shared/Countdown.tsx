@@ -1,9 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { GRACE_PERIOD_MINUTES } from "@/lib/constants";
 
 interface CountdownProps {
   targetIso: string;
+  /** Whether the roster is locked — the grace-period phase only makes sense once there's something to start. */
+  committed: boolean;
 }
 
 interface Segment {
@@ -26,48 +29,79 @@ function segmentsFor(remainingMs: number): Segment[] {
   return segments;
 }
 
-/** Live countdown to the coordination time set for the event. Doesn't auto-start anything — the commissioner still clicks "Start Race". */
-export function Countdown({ targetIso }: CountdownProps) {
+function ScoreboardSegments({ remainingMs }: { remainingMs: number }) {
+  return (
+    <div className="flex items-center justify-center gap-2">
+      {segmentsFor(remainingMs).map((segment) => (
+        <div
+          key={segment.label}
+          className="flex min-w-[56px] flex-col items-center rounded-lg border border-turf-600 bg-turf-900 px-3 py-2"
+        >
+          <span className="font-display text-3xl tabular-nums text-gold-500">
+            {String(segment.value).padStart(2, "0")}
+          </span>
+          <span className="text-[10px] uppercase tracking-wide text-chalk-faint">{segment.label}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function MessageBox({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="rounded-xl border border-gold-500/40 bg-gold-500/10 px-4 py-3 text-center font-display text-xl tracking-wide text-gold-500">
+      {children}
+    </div>
+  );
+}
+
+/**
+ * Live countdown to the scheduled time, then a grace period for stragglers.
+ * Purely a display — the actual auto-start trigger lives in the admin
+ * dashboard (it needs the admin token), this just shows where things stand.
+ */
+export function Countdown({ targetIso, committed }: CountdownProps) {
   // Stays null through the server-rendered pass and the first client render
   // (hydration), then fills in from an effect — a ticking clock can't be
   // computed identically on server and client, so we don't try.
-  const [remainingMs, setRemainingMs] = useState<number | null>(null);
+  const [nowMs, setNowMs] = useState<number | null>(null);
 
   useEffect(() => {
-    function tick() {
-      setRemainingMs(new Date(targetIso).getTime() - Date.now());
-    }
+    const tick = () => setNowMs(Date.now());
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
-  }, [targetIso]);
+  }, []);
 
-  if (remainingMs === null) return null;
+  if (nowMs === null) return null;
 
-  if (remainingMs <= 0) {
+  const scheduledMs = new Date(targetIso).getTime();
+  const graceEndMs = scheduledMs + GRACE_PERIOD_MINUTES * 60_000;
+
+  if (nowMs < scheduledMs) {
     return (
-      <div className="rounded-xl border border-gold-500/40 bg-gold-500/10 px-4 py-3 text-center font-display text-xl tracking-wide text-gold-500">
-        🏈 Kickoff time — the race should start any moment now.
+      <div className="flex flex-col items-center gap-2 rounded-xl border border-turf-700 bg-turf-800/50 px-4 py-4">
+        <div className="text-xs uppercase tracking-wide text-chalk-faint">Race starts in</div>
+        <ScoreboardSegments remainingMs={scheduledMs - nowMs} />
       </div>
     );
   }
 
-  return (
-    <div className="flex flex-col items-center gap-2 rounded-xl border border-turf-700 bg-turf-800/50 px-4 py-4">
-      <div className="text-xs uppercase tracking-wide text-chalk-faint">Race starts in</div>
-      <div className="flex items-center justify-center gap-2">
-        {segmentsFor(remainingMs).map((segment) => (
-          <div
-            key={segment.label}
-            className="flex min-w-[56px] flex-col items-center rounded-lg border border-turf-600 bg-turf-900 px-3 py-2"
-          >
-            <span className="font-display text-3xl tabular-nums text-gold-500">
-              {String(segment.value).padStart(2, "0")}
-            </span>
-            <span className="text-[10px] uppercase tracking-wide text-chalk-faint">{segment.label}</span>
-          </div>
-        ))}
+  if (!committed) {
+    return <MessageBox>⏳ Waiting for the commissioner to lock the roster…</MessageBox>;
+  }
+
+  if (nowMs < graceEndMs) {
+    return (
+      <div className="flex flex-col items-center gap-2 rounded-xl border border-turf-700 bg-turf-800/50 px-4 py-4">
+        <div className="text-xs uppercase tracking-wide text-chalk-faint">
+          🏈 Room&apos;s open — race auto-starts in
+        </div>
+        <ScoreboardSegments remainingMs={graceEndMs - nowMs} />
+        <div className="text-[10px] text-chalk-faint">Stragglers can still pick their team until then</div>
       </div>
-    </div>
-  );
+    );
+  }
+
+  return <MessageBox>🏈 Kickoff time — the race should start any moment now.</MessageBox>;
 }

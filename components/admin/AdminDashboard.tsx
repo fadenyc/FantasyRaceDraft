@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import type { Claim, PublicSeason, Team } from "@/lib/db/types";
 import { createBrowserClient } from "@/lib/supabase/client";
+import { GRACE_PERIOD_MINUTES } from "@/lib/constants";
 import { TeamRosterEditor } from "./TeamRosterEditor";
 import { ScheduleForm } from "./ScheduleForm";
 import { CommitPanel } from "./CommitPanel";
@@ -12,6 +13,7 @@ import { RaceResultsTable } from "@/components/race/RaceResultsTable";
 import { FairnessExplainer } from "@/components/shared/FairnessExplainer";
 import { PresenceAvatars } from "@/components/shared/PresenceAvatars";
 import { usePresence } from "@/components/shared/usePresence";
+import { Countdown } from "@/components/shared/Countdown";
 
 interface AdminDashboardProps {
   adminToken: string;
@@ -58,6 +60,34 @@ export function AdminDashboard({
       supabase.removeChannel(channel);
     };
   }, [season.id]);
+
+  // Auto-starts the race once the grace period after the scheduled time
+  // elapses. Runs from the admin's browser (only place with adminToken).
+  // Re-checks every tick rather than firing once at a computed timeout, so
+  // it self-corrects even if this tab was opened after the grace period
+  // already passed — no need for the commissioner's tab to be open at the
+  // exact right second.
+  const hasAutoStartedRef = useRef(false);
+  useEffect(() => {
+    if (season.status !== "committed" || !season.scheduled_at) return;
+    hasAutoStartedRef.current = false;
+    const graceEndMs = new Date(season.scheduled_at).getTime() + GRACE_PERIOD_MINUTES * 60_000;
+
+    const id = setInterval(() => {
+      if (hasAutoStartedRef.current || Date.now() < graceEndMs) return;
+      hasAutoStartedRef.current = true;
+      fetch(`/api/admin/${adminToken}/start`, { method: "POST" })
+        .then((res) => {
+          router.refresh();
+          if (!res.ok) hasAutoStartedRef.current = false;
+        })
+        .catch(() => {
+          hasAutoStartedRef.current = false;
+        });
+    }, 1000);
+
+    return () => clearInterval(id);
+  }, [season.status, season.scheduled_at, adminToken, router]);
 
   function copy(url: string, which: "public" | "admin") {
     navigator.clipboard.writeText(url);
@@ -141,7 +171,13 @@ export function AdminDashboard({
             </ul>
           </div>
           <ScheduleForm adminToken={adminToken} scheduledAt={season.scheduled_at} onSaved={() => router.refresh()} />
+          {season.scheduled_at && <Countdown targetIso={season.scheduled_at} committed />}
           <StartRaceButton adminToken={adminToken} onStarted={() => router.refresh()} />
+          <p className="text-center text-xs text-chalk-faint">
+            {season.scheduled_at
+              ? `The race auto-starts ${GRACE_PERIOD_MINUTES} minutes after the scheduled time — or click above to start it right now.`
+              : "No schedule set, so this won't auto-start — click above whenever you're ready."}
+          </p>
         </>
       )}
 

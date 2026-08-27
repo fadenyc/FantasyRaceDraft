@@ -181,7 +181,9 @@ export function SeasonView({ publicToken, initialSeason, initialTeams, initialCl
         <PresenceAvatars entries={presence} />
       </div>
 
-      {!raceIsShowing && season.scheduled_at && <Countdown targetIso={season.scheduled_at} />}
+      {!raceIsShowing && season.scheduled_at && (
+        <Countdown targetIso={season.scheduled_at} committed={season.status !== "setup"} />
+      )}
 
       {raceIsShowing ? (
         <div className="flex flex-col gap-4">
