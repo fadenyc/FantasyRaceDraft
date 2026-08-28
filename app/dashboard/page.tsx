@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { createSessionClient } from "@/lib/supabase/server";
 import { listSeasonsByOwner } from "@/lib/db/admin";
 import { SignOutButton } from "@/components/auth/SignOutButton";
+import { SeasonList } from "@/components/dashboard/SeasonList";
 
 export const dynamic = "force-dynamic";
 
@@ -52,25 +53,7 @@ export default async function DashboardPage() {
         Start a Season
       </Link>
 
-      {seasons.length === 0 ? (
-        <p className="text-base text-chalk-muted">
-          No seasons yet — create one to get a link you can share with your league.
-        </p>
-      ) : (
-        <ul className="flex flex-col gap-2">
-          {seasons.map((season) => (
-            <li key={season.id}>
-              <Link
-                href={`/dashboard/${season.id}`}
-                className="flex items-center justify-between rounded-lg border border-turf-700 bg-turf-800/50 px-4 py-3 text-chalk hover:border-field-500 hover:bg-turf-700"
-              >
-                <span className="text-lg font-medium">{season.name}</span>
-                <span className="text-sm uppercase tracking-wide text-chalk-faint">{season.status}</span>
-              </Link>
-            </li>
-          ))}
-        </ul>
-      )}
+      <SeasonList initialSeasons={seasons} />
 
       <div className="flex flex-col gap-4 rounded-xl border border-turf-700 bg-turf-800/50 p-5">
         <h2 className="font-display text-2xl tracking-wide text-chalk">How it works</h2>
