@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { Claim, PublicSeason, Team } from "@/lib/db/types";
 import { createBrowserClient } from "@/lib/supabase/client";
@@ -10,23 +11,26 @@ import { TeamRosterEditor } from "./TeamRosterEditor";
 import { ScheduleForm } from "./ScheduleForm";
 import { CommitPanel } from "./CommitPanel";
 import { RaceResultsTable } from "@/components/race/RaceResultsTable";
+import { SnakeDraftBoard } from "@/components/race/SnakeDraftBoard";
 import { FairnessExplainer } from "@/components/shared/FairnessExplainer";
 import { PresenceAvatars } from "@/components/shared/PresenceAvatars";
 import { usePresence } from "@/components/shared/usePresence";
 import { Countdown } from "@/components/shared/Countdown";
 
 interface AdminDashboardProps {
-  adminToken: string;
+  /** Base admin API path — `/api/admin/{adminToken}` (legacy) or `/api/dashboard/{seasonId}` (owned). */
+  apiBase: string;
   season: PublicSeason;
   teams: Team[];
   claims: Claim[];
   publicUrl: string;
-  adminUrl: string;
+  /** The shareable admin link, or null for an owned season — those manage access purely via being signed in, nothing to copy/share. */
+  adminUrl: string | null;
   qrCodeDataUrl: string;
 }
 
 export function AdminDashboard({
-  adminToken,
+  apiBase,
   season,
   teams,
   claims: initialClaims,
@@ -62,11 +66,12 @@ export function AdminDashboard({
   }, [season.id]);
 
   // Auto-starts the race once the grace period after the scheduled time
-  // elapses. Runs from the admin's browser (only place with adminToken).
-  // Re-checks every tick rather than firing once at a computed timeout, so
-  // it self-corrects even if this tab was opened after the grace period
-  // already passed — no need for the commissioner's tab to be open at the
-  // exact right second.
+  // elapses. Runs from whichever browser has this dashboard open (token
+  // link or signed-in owner session — either way, this component doesn't
+  // need to know which). Re-checks every tick rather than firing once at a
+  // computed timeout, so it self-corrects even if this tab was opened
+  // after the grace period already passed — no need for the commissioner's
+  // tab to be open at the exact right second.
   const hasAutoStartedRef = useRef(false);
   useEffect(() => {
     if (season.status !== "committed" || !season.scheduled_at) return;
@@ -76,7 +81,7 @@ export function AdminDashboard({
     const id = setInterval(() => {
       if (hasAutoStartedRef.current || Date.now() < graceEndMs) return;
       hasAutoStartedRef.current = true;
-      fetch(`/api/admin/${adminToken}/start`, { method: "POST" })
+      fetch(`${apiBase}/start`, { method: "POST" })
         .then((res) => {
           router.refresh();
           if (!res.ok) hasAutoStartedRef.current = false;
@@ -87,7 +92,7 @@ export function AdminDashboard({
     }, 1000);
 
     return () => clearInterval(id);
-  }, [season.status, season.scheduled_at, adminToken, router]);
+  }, [season.status, season.scheduled_at, apiBase, router]);
 
   function copy(url: string, which: "public" | "admin") {
     navigator.clipboard.writeText(url);
@@ -100,6 +105,11 @@ export function AdminDashboard({
   return (
     <div className="mx-auto flex w-full min-w-0 max-w-2xl flex-col gap-8 p-6">
       <div>
+        {adminUrl === null && (
+          <Link href="/dashboard" className="text-xs text-chalk-faint hover:text-chalk hover:underline">
+            ← My Seasons
+          </Link>
+        )}
         <h1 className="font-display text-4xl tracking-wide text-chalk">{season.name}</h1>
         <span className="text-xs uppercase tracking-wide text-chalk-faint">{season.status}</span>
       </div>
@@ -129,21 +139,27 @@ export function AdminDashboard({
               {copiedLink === "public" ? "Copied" : "Copy"}
             </button>
           </div>
-          <div className="flex min-w-0 items-center justify-between gap-2">
-            <div className="min-w-0">
-              <div className="text-xs uppercase tracking-wide text-endzone-400">
-                Admin link — never share this
+          {adminUrl ? (
+            <div className="flex min-w-0 items-center justify-between gap-2">
+              <div className="min-w-0">
+                <div className="text-xs uppercase tracking-wide text-endzone-400">
+                  Admin link — never share this
+                </div>
+                <div className="truncate text-sm text-chalk">{adminUrl}</div>
               </div>
-              <div className="truncate text-sm text-chalk">{adminUrl}</div>
+              <button
+                type="button"
+                onClick={() => copy(adminUrl, "admin")}
+                className="shrink-0 rounded-full border border-turf-600 px-3 py-2 text-xs text-chalk hover:bg-turf-700"
+              >
+                {copiedLink === "admin" ? "Copied" : "Copy"}
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={() => copy(adminUrl, "admin")}
-              className="shrink-0 rounded-full border border-turf-600 px-3 py-2 text-xs text-chalk hover:bg-turf-700"
-            >
-              {copiedLink === "admin" ? "Copied" : "Copy"}
-            </button>
-          </div>
+          ) : (
+            <div className="text-xs text-chalk-faint">
+              🔒 Only you can manage this season — you&apos;re signed in as the owner.
+            </div>
+          )}
         </div>
       </div>
 
@@ -154,9 +170,15 @@ export function AdminDashboard({
 
       {season.status === "setup" && (
         <>
-          <TeamRosterEditor adminToken={adminToken} teams={teams} onSaved={() => router.refresh()} />
-          <ScheduleForm adminToken={adminToken} scheduledAt={season.scheduled_at} onSaved={() => router.refresh()} />
-          <CommitPanel adminToken={adminToken} onCommitted={() => router.refresh()} />
+          <TeamRosterEditor apiBase={apiBase} teams={teams} onSaved={() => router.refresh()} />
+          <ScheduleForm
+            apiBase={apiBase}
+            scheduledAt={season.scheduled_at}
+            raceDurationSeconds={season.race_duration_seconds ?? 60}
+            snakeDraftRounds={season.snake_draft_rounds ?? null}
+            onSaved={() => router.refresh()}
+          />
+          <CommitPanel apiBase={apiBase} onCommitted={() => router.refresh()} />
         </>
       )}
 
@@ -170,9 +192,15 @@ export function AdminDashboard({
               ))}
             </ul>
           </div>
-          <ScheduleForm adminToken={adminToken} scheduledAt={season.scheduled_at} onSaved={() => router.refresh()} />
+          <ScheduleForm
+            apiBase={apiBase}
+            scheduledAt={season.scheduled_at}
+            raceDurationSeconds={season.race_duration_seconds ?? 60}
+            snakeDraftRounds={season.snake_draft_rounds ?? null}
+            onSaved={() => router.refresh()}
+          />
           {season.scheduled_at && <Countdown targetIso={season.scheduled_at} committed />}
-          <StartRaceButton adminToken={adminToken} onStarted={() => router.refresh()} />
+          <StartRaceButton apiBase={apiBase} onStarted={() => router.refresh()} />
           <p className="text-center text-xs text-chalk-faint">
             {season.scheduled_at
               ? `The race auto-starts ${GRACE_PERIOD_MINUTES} minutes after the scheduled time — or click above to start it right now.`
@@ -184,7 +212,15 @@ export function AdminDashboard({
       {season.status === "revealed" && season.final_order && (
         <div className="flex flex-col gap-4">
           <h2 className="font-display text-2xl tracking-wide text-chalk">Final draft order</h2>
-          <RaceResultsTable finalOrder={season.final_order} teamNameById={teamNameById} />
+          <RaceResultsTable finalOrder={season.final_order} teamNameById={teamNameById} seasonName={season.name} />
+          {season.snake_draft_rounds && (
+            <SnakeDraftBoard
+              finalOrder={season.final_order}
+              teamNameById={teamNameById}
+              rounds={season.snake_draft_rounds}
+              seasonName={season.name}
+            />
+          )}
         </div>
       )}
 
@@ -198,14 +234,14 @@ export function AdminDashboard({
   );
 }
 
-function StartRaceButton({ adminToken, onStarted }: { adminToken: string; onStarted: () => void }) {
+function StartRaceButton({ apiBase, onStarted }: { apiBase: string; onStarted: () => void }) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function start() {
     setSubmitting(true);
     setError(null);
-    const res = await fetch(`/api/admin/${adminToken}/start`, { method: "POST" });
+    const res = await fetch(`${apiBase}/start`, { method: "POST" });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
       setError(body.error ?? "Failed to start the race.");

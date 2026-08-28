@@ -1,30 +1,36 @@
-import { notFound } from "next/navigation";
-import { getAdminBundleByAdminToken } from "@/lib/db/admin";
+import { notFound, redirect } from "next/navigation";
+import { getOwnedSeasonById } from "@/lib/db/admin";
+import { createSessionClient } from "@/lib/supabase/server";
 import { AdminDashboard } from "@/components/admin/AdminDashboard";
 import { getOrigin } from "@/lib/server/origin";
 import { generateQrCodeDataUrl } from "@/lib/server/qrcode";
 
 export const dynamic = "force-dynamic";
 
-export default async function AdminPage({
+export default async function OwnedSeasonAdminPage({
   params,
 }: {
-  params: Promise<{ adminToken: string }>;
+  params: Promise<{ seasonId: string }>;
 }) {
-  const { adminToken } = await params;
-  const bundle = await getAdminBundleByAdminToken(adminToken);
+  const { seasonId } = await params;
 
+  const sessionClient = await createSessionClient();
+  const {
+    data: { user },
+  } = await sessionClient.auth.getUser();
+  if (!user) redirect(`/login?next=/dashboard/${seasonId}`);
+
+  const bundle = await getOwnedSeasonById(seasonId, user.id);
   if (!bundle) notFound();
 
   const { season, teams, claims } = bundle;
   const origin = await getOrigin();
   const publicUrl = `${origin}/s/${season.public_token}`;
-  const adminUrl = `${origin}/admin/${adminToken}`;
   const qrCodeDataUrl = await generateQrCodeDataUrl(publicUrl);
 
   return (
     <AdminDashboard
-      apiBase={`/api/admin/${adminToken}`}
+      apiBase={`/api/dashboard/${seasonId}`}
       season={{
         id: season.id,
         name: season.name,
@@ -44,7 +50,7 @@ export default async function AdminPage({
       teams={teams}
       claims={claims}
       publicUrl={publicUrl}
-      adminUrl={adminUrl}
+      adminUrl={null}
       qrCodeDataUrl={qrCodeDataUrl}
     />
   );

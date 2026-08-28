@@ -1,12 +1,15 @@
 import Image from "next/image";
 import Link from "next/link";
-import { listPublicSeasons } from "@/lib/db/queries";
+import { createSessionClient } from "@/lib/supabase/server";
 import stadiumFootball from "@/public/images/stadium-football.png";
 
 export const dynamic = "force-dynamic";
 
 export default async function Home() {
-  const seasons = await listPublicSeasons();
+  const supabase = await createSessionClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
   return (
     <div className="relative min-h-screen overflow-hidden">
@@ -31,38 +34,33 @@ export default async function Home() {
           </p>
         </div>
 
-        <div className="flex flex-col gap-3">
-          <Link
-            href="/new"
-            className="group flex items-center gap-2 font-display text-2xl tracking-wide text-chalk hover:text-endzone-400"
-          >
-            Start a Season
-            <span className="text-field-400 transition-transform group-hover:translate-x-1">›</span>
-          </Link>
-
-          {seasons.length === 0 ? (
-            <p className="text-sm text-chalk-faint">
-              No seasons yet — create one to get a link you can share with your league.
-            </p>
+        <div className="flex flex-wrap items-center gap-4">
+          {user ? (
+            <>
+              <Link
+                href="/dashboard"
+                className="rounded-full bg-endzone-500 px-6 py-3 font-display text-lg tracking-wide text-chalk shadow-[0_0_30px_-8px_var(--color-endzone-500)] hover:bg-endzone-600"
+              >
+                My Seasons
+              </Link>
+              <Link href="/new" className="font-display text-lg tracking-wide text-chalk-muted hover:text-chalk">
+                Start a new one →
+              </Link>
+            </>
           ) : (
-            <ul className="flex flex-col">
-              {seasons.map((season) => (
-                <li key={season.id} className="border-b border-turf-700/60">
-                  <Link
-                    href={`/s/${season.public_token}`}
-                    className="flex items-center justify-between gap-3 py-3 text-chalk hover:text-field-400"
-                  >
-                    <span className="font-medium">{season.name}</span>
-                    <span className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-field-400">
-                      {season.status}
-                      <span className="text-sm">›</span>
-                    </span>
-                  </Link>
-                </li>
-              ))}
-            </ul>
+            <Link
+              href="/login?next=/dashboard"
+              className="rounded-full bg-endzone-500 px-6 py-3 font-display text-lg tracking-wide text-chalk shadow-[0_0_30px_-8px_var(--color-endzone-500)] hover:bg-endzone-600"
+            >
+              Sign In to Start a Season
+            </Link>
           )}
         </div>
+
+        <p className="max-w-md text-xs text-chalk-faint">
+          Already have a season link from before accounts existed? It still works exactly as before —
+          nothing to sign in for.
+        </p>
       </div>
     </div>
   );

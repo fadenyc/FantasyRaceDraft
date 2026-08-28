@@ -72,16 +72,28 @@ const YARD_LINES_STYLE: CSSProperties = {
   backgroundRepeat: "no-repeat",
 };
 
+// Alternating mowed-grass shade per lane — the classic striped-turf look,
+// reusing the app's existing turf tones so it stays on-palette.
+const LANE_TURF_CLASS = ["bg-turf-700", "bg-turf-800"];
+
 export interface RaceCanvasProps {
   teams: RaceCanvasTeam[];
   finalOrder: string[];
   seed: number;
   mode: ClockMode;
-  cheerPulses: Record<string, number>;
+  /** How long the race takes to play out, in ms. Defaults to the standard 60s race. */
+  durationMs?: number;
   onComplete?: () => void;
 }
 
-export function RaceCanvas({ teams, finalOrder, seed, mode, cheerPulses, onComplete }: RaceCanvasProps) {
+export function RaceCanvas({
+  teams,
+  finalOrder,
+  seed,
+  mode,
+  durationMs = RACE_DURATION_MS,
+  onComplete,
+}: RaceCanvasProps) {
   const trackRef = useRef<HTMLDivElement | null>(null);
   const trackWidthRef = useRef(0);
   const domRefs = useRef<Map<string, RunnerDomRefs>>(new Map());
@@ -151,7 +163,7 @@ export function RaceCanvas({ teams, finalOrder, seed, mode, cheerPulses, onCompl
     if (!reducedMotion || mode.mode === "idle") return;
     // No need to touch `phase` here — the READY/SET/GO overlay is already
     // gated on `!reducedMotion` in the render below.
-    const positions = computeRacePositions(seed, finalOrder, RACE_DURATION_MS);
+    const positions = computeRacePositions(seed, finalOrder, durationMs, durationMs);
     const standings = computeLiveStandings(positions);
     // One-time sync to an external condition (the OS-level reduced-motion
     // preference), not a per-frame update — jump straight to final
@@ -176,7 +188,7 @@ export function RaceCanvas({ teams, finalOrder, seed, mode, cheerPulses, onCompl
 
     const timer = setTimeout(() => onCompleteRef.current?.(), 550);
     return () => clearTimeout(timer);
-  }, [reducedMotion, mode.mode, seed, finalOrder]);
+  }, [reducedMotion, mode.mode, seed, finalOrder, durationMs]);
 
   // The main engine: one rAF loop drives every runner's transform and
   // sprite frame directly via refs — no React state per frame. Position is
@@ -198,10 +210,10 @@ export function RaceCanvas({ teams, finalOrder, seed, mode, cheerPulses, onCompl
       const dtMs = clamp(rawDelta, 0, MAX_FRAME_DELTA_MS);
 
       const rawElapsed = Date.now() - origin;
-      const elapsed = clamp(rawElapsed, 0, RACE_DURATION_MS);
+      const elapsed = clamp(rawElapsed, 0, durationMs);
       setPhase(elapsed >= PREROLL_MS ? "racing" : "preroll");
 
-      const positions = computeRacePositions(seed, finalOrder, elapsed);
+      const positions = computeRacePositions(seed, finalOrder, elapsed, durationMs);
       const standings = computeLiveStandings(positions);
       const width = trackWidthRef.current || 0;
       const size = runnerSizeRef.current;
@@ -284,7 +296,7 @@ export function RaceCanvas({ teams, finalOrder, seed, mode, cheerPulses, onCompl
         setLiveStandings(standings);
       }
 
-      if (elapsed < RACE_DURATION_MS) {
+      if (elapsed < durationMs) {
         frameId = requestAnimationFrame(tick);
       } else if (!done) {
         done = true;
@@ -295,13 +307,12 @@ export function RaceCanvas({ teams, finalOrder, seed, mode, cheerPulses, onCompl
     frameId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frameId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode.mode, mode.mode === "live" ? mode.raceStartAt : null, seed, finalOrder, reducedMotion]);
+  }, [mode.mode, mode.mode === "live" ? mode.raceStartAt : null, seed, finalOrder, reducedMotion, durationMs]);
 
   return (
-    <div className="flex flex-col gap-1.5 rounded-xl border border-turf-700 bg-turf-800/70 p-2 sm:gap-2 sm:p-4">
+    <div className="flex flex-col gap-1.5 rounded-xl border border-turf-700 bg-gradient-to-b from-turf-900 via-turf-800/80 to-turf-900 p-2 sm:gap-2 sm:p-4">
       {phase === "preroll" && !reducedMotion && mode.mode !== "idle" && <ReadySetGo />}
       {teamsWithSheet.map((team, index) => {
-        const pulseKey = cheerPulses[team.id];
         const displayRank = lockedRanks[team.id] ?? (liveStandings.indexOf(team.id) + 1 || null);
         const isLocked = Boolean(lockedRanks[team.id]);
 
@@ -318,11 +329,13 @@ export function RaceCanvas({ teams, finalOrder, seed, mode, cheerPulses, onCompl
             </div>
             <div
               ref={index === 0 ? trackRef : undefined}
-              className="relative h-8 min-w-0 flex-1 overflow-visible rounded-md bg-turf-700 sm:h-9"
+              className={`relative h-8 min-w-0 flex-1 overflow-visible rounded-md sm:h-9 ${LANE_TURF_CLASS[index % 2]}`}
               style={YARD_LINES_STYLE}
             >
-              <div className="absolute inset-y-0 right-0 flex w-[10%] items-center justify-center overflow-hidden rounded-r-md bg-gradient-to-l from-endzone-600 to-endzone-600/60 text-xs">
-                🏁
+              <div className="absolute inset-y-0 right-0 flex w-[12%] items-center justify-center overflow-hidden rounded-r-md border-l-2 border-chalk/80 bg-gradient-to-l from-endzone-700 via-endzone-600 to-endzone-600/70">
+                <span className="font-display text-[9px] font-bold tracking-wide text-chalk/90 [text-shadow:0_1px_1px_rgba(0,0,0,0.6)] sm:text-xs">
+                  TD
+                </span>
               </div>
               <div
                 ref={(el) => {
@@ -343,9 +356,6 @@ export function RaceCanvas({ teams, finalOrder, seed, mode, cheerPulses, onCompl
                   }}
                   className="pointer-events-none absolute right-full top-1/2 h-1.5 w-6 -translate-y-1/2 rounded-full bg-gradient-to-l from-chalk/70 to-transparent opacity-0 sm:w-9"
                 />
-                {pulseKey !== undefined && (
-                  <span className="absolute inline-flex h-2/3 w-2/3 animate-ping rounded-full bg-gold-500/60" />
-                )}
                 <div
                   ref={(el) => {
                     getRefs(team.id).sprite = el;

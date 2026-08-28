@@ -19,11 +19,15 @@ export interface RacePosition {
 const profileCache = new Map<string, RaceProfileSet>();
 const PROFILE_CACHE_LIMIT = 8;
 
-function getProfileSet(seed: number, finalOrder: readonly string[]): RaceProfileSet {
-  const key = `${seed}:${finalOrder.join(",")}`;
+function getProfileSet(
+  seed: number,
+  finalOrder: readonly string[],
+  durationMs: number,
+): RaceProfileSet {
+  const key = `${seed}:${finalOrder.join(",")}:${durationMs}`;
   let set = profileCache.get(key);
   if (!set) {
-    set = buildRaceProfileSet(seed, finalOrder);
+    set = buildRaceProfileSet(seed, finalOrder, { ...DEFAULT_RACE_CONFIG, durationMs });
     profileCache.set(key, set);
     if (profileCache.size > PROFILE_CACHE_LIMIT) {
       const oldestKey = profileCache.keys().next().value;
@@ -52,8 +56,9 @@ export function computeRacePositions(
   seed: number,
   finalOrder: readonly string[],
   elapsedMs: number,
+  durationMs: number = RACE_DURATION_MS,
 ): RacePosition[] {
-  const { runners } = getProfileSet(seed, finalOrder);
+  const { runners } = getProfileSet(seed, finalOrder, durationMs);
   const t = Math.max(0, elapsedMs);
 
   return runners.map((runner) => {
@@ -67,8 +72,8 @@ export function computeRacePositions(
   });
 }
 
-export function isRaceComplete(elapsedMs: number): boolean {
-  return elapsedMs >= RACE_DURATION_MS;
+export function isRaceComplete(elapsedMs: number, durationMs: number = RACE_DURATION_MS): boolean {
+  return elapsedMs >= durationMs;
 }
 
 /** Current standings a viewer would actually see, sorted by live position — never reads the predetermined order. */

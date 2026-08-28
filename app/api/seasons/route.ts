@@ -1,11 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createServiceRoleClient } from "@/lib/supabase/server";
+import { createServiceRoleClient, createSessionClient } from "@/lib/supabase/server";
 import { generateAdminToken, generatePublicToken } from "@/lib/tokens";
 
 const MIN_TEAMS = 2;
 const MAX_TEAMS = 24;
 
 export async function POST(request: NextRequest) {
+  const sessionClient = await createSessionClient();
+  const {
+    data: { user },
+  } = await sessionClient.auth.getUser();
+  if (!user) return NextResponse.json({ error: "Sign in to create a season." }, { status: 401 });
+
   const body = await request.json().catch(() => null);
 
   if (
@@ -43,6 +49,7 @@ export async function POST(request: NextRequest) {
       admin_token: adminToken,
       scheduled_at: scheduledAt,
       status: "setup",
+      owner_user_id: user.id,
     })
     .select()
     .single();
@@ -65,5 +72,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Failed to create teams." }, { status: 500 });
   }
 
-  return NextResponse.json({ publicToken, adminToken }, { status: 201 });
+  // adminToken is still generated (satisfies the column's not-null/unique
+  // constraint) but never returned — owned seasons are managed purely via
+  // the signed-in owner's session, not a shareable link.
+  return NextResponse.json({ seasonId: season.id, publicToken }, { status: 201 });
 }

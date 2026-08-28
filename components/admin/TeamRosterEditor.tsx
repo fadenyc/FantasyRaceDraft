@@ -4,12 +4,13 @@ import { useState } from "react";
 import type { Team } from "@/lib/db/types";
 
 interface TeamRosterEditorProps {
-  adminToken: string;
+  /** Base admin API path — `/api/admin/{adminToken}` (legacy) or `/api/dashboard/{seasonId}` (owned). */
+  apiBase: string;
   teams: Team[];
   onSaved: () => void;
 }
 
-export function TeamRosterEditor({ adminToken, teams, onSaved }: TeamRosterEditorProps) {
+export function TeamRosterEditor({ apiBase, teams, onSaved }: TeamRosterEditorProps) {
   const [names, setNames] = useState(() => Object.fromEntries(teams.map((t) => [t.id, t.name])));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -17,7 +18,7 @@ export function TeamRosterEditor({ adminToken, teams, onSaved }: TeamRosterEdito
   async function save() {
     setSaving(true);
     setError(null);
-    const res = await fetch(`/api/admin/${adminToken}/teams`, {
+    const res = await fetch(`${apiBase}/teams`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ teams: teams.map((t) => ({ id: t.id, name: names[t.id] })) }),

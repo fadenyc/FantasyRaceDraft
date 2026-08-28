@@ -2,14 +2,20 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import type { SeasonWithTeamNames } from "@/lib/db/admin";
 
 const DEFAULT_TEAM_COUNT = 12;
 
-export function NewSeasonForm() {
+interface NewSeasonFormProps {
+  previousSeasons: SeasonWithTeamNames[];
+}
+
+export function NewSeasonForm({ previousSeasons }: NewSeasonFormProps) {
   const router = useRouter();
   const [name, setName] = useState("");
   const [teamNames, setTeamNames] = useState<string[]>(Array(DEFAULT_TEAM_COUNT).fill(""));
   const [scheduledAt, setScheduledAt] = useState("");
+  const [reuseSeasonId, setReuseSeasonId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -23,6 +29,14 @@ export function NewSeasonForm() {
 
   function removeTeam(index: number) {
     setTeamNames((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  function applyReuse(seasonId: string) {
+    setReuseSeasonId(seasonId);
+    const season = previousSeasons.find((s) => s.id === seasonId);
+    if (season && season.teamNames.length > 0) {
+      setTeamNames(season.teamNames);
+    }
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -47,8 +61,8 @@ export function NewSeasonForm() {
       return;
     }
 
-    const { adminToken } = await res.json();
-    router.push(`/admin/${adminToken}`);
+    const { seasonId } = await res.json();
+    router.push(`/dashboard/${seasonId}`);
   }
 
   return (
@@ -80,6 +94,28 @@ export function NewSeasonForm() {
           className="rounded-lg border border-turf-600 bg-turf-900 px-3 py-2 text-chalk"
         />
       </div>
+
+      {previousSeasons.length > 0 && (
+        <div className="flex flex-col gap-1">
+          <label htmlFor="reuse-season" className="font-display text-lg tracking-wide text-chalk">
+            Reuse teams from a previous season (optional)
+          </label>
+          <select
+            id="reuse-season"
+            value={reuseSeasonId}
+            onChange={(e) => applyReuse(e.target.value)}
+            className="rounded-lg border border-turf-600 bg-turf-900 px-3 py-2 text-chalk"
+          >
+            <option value="">Start fresh</option>
+            {previousSeasons.map((season) => (
+              <option key={season.id} value={season.id} disabled={season.teamNames.length === 0}>
+                {season.name}
+                {season.teamNames.length === 0 ? " (no teams)" : ""}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
 
       <div className="flex flex-col gap-2">
         <div className="flex items-center justify-between">

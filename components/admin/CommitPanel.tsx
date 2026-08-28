@@ -3,11 +3,12 @@
 import { useState } from "react";
 
 interface CommitPanelProps {
-  adminToken: string;
+  /** Base admin API path — `/api/admin/{adminToken}` (legacy) or `/api/dashboard/{seasonId}` (owned). */
+  apiBase: string;
   onCommitted: () => void;
 }
 
-export function CommitPanel({ adminToken, onCommitted }: CommitPanelProps) {
+export function CommitPanel({ apiBase, onCommitted }: CommitPanelProps) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
@@ -15,7 +16,7 @@ export function CommitPanel({ adminToken, onCommitted }: CommitPanelProps) {
   async function commit() {
     setSubmitting(true);
     setError(null);
-    const res = await fetch(`/api/admin/${adminToken}/commit`, { method: "POST" });
+    const res = await fetch(`${apiBase}/commit`, { method: "POST" });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
       setError(body.error ?? "Failed to commit.");

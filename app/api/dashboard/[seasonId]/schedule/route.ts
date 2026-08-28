@@ -1,18 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSeasonByAdminToken } from "@/lib/db/admin";
-import { createServiceRoleClient } from "@/lib/supabase/server";
+import { getSeasonByIdForOwner } from "@/lib/db/admin";
+import { createServiceRoleClient, createSessionClient } from "@/lib/supabase/server";
 
 const MIN_DURATION_SECONDS = 15;
 const MAX_DURATION_SECONDS = 300;
 const MIN_ROUNDS = 1;
 const MAX_ROUNDS = 30;
 
-/** Updates the coordination timestamp and race length shown to the league. Purely informational/cosmetic — doesn't gate "Start Race" or affect the shuffle. */
+/** Owner-session equivalent of /api/admin/[adminToken]/schedule. */
 export async function PUT(
   request: NextRequest,
-  { params }: { params: Promise<{ adminToken: string }> },
+  { params }: { params: Promise<{ seasonId: string }> },
 ) {
-  const { adminToken } = await params;
+  const { seasonId } = await params;
   const body = await request.json().catch(() => null);
 
   if (!body || (body.scheduledAt !== null && typeof body.scheduledAt !== "string")) {
@@ -44,8 +44,14 @@ export async function PUT(
     );
   }
 
+  const sessionClient = await createSessionClient();
+  const {
+    data: { user },
+  } = await sessionClient.auth.getUser();
+  if (!user) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
+
   const supabase = createServiceRoleClient();
-  const season = await getSeasonByAdminToken(supabase, adminToken);
+  const season = await getSeasonByIdForOwner(supabase, seasonId, user.id);
   if (!season) return NextResponse.json({ error: "Not found." }, { status: 404 });
 
   if (season.status === "revealed" || season.status === "archived") {

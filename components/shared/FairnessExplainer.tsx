@@ -35,18 +35,21 @@ export function FairnessExplainer({
       <div className="mt-3 flex flex-col gap-3 text-chalk-muted">
         <ol className="list-decimal space-y-1 pl-5">
           <li>
-            Before the race, the commissioner generates a secret random value and publishes only
-            its SHA-256 hash — that&apos;s the fingerprint below. A hash can&apos;t be reversed, so
-            nobody can figure out the secret from it, but once it&apos;s revealed you can check the
-            hash matches.
+            Before the race, the app generates a secret random code by itself — nobody picks it,
+            not even the commissioner — and locks it in a digital safe. That&apos;s the
+            &quot;fingerprint&quot; below. Nobody can change what&apos;s inside the safe after
+            it&apos;s locked, and you can&apos;t peek inside to guess the secret code either.
           </li>
           <li>
-            Team names are locked the moment that fingerprint is published — the thing being
-            shuffled can&apos;t change after committing to how it&apos;ll be shuffled.
+            The team names get locked in at the exact same moment. So the commissioner has to
+            decide the rules before knowing how they&apos;ll turn out — no changing team names
+            after seeing which order they&apos;d land in.
           </li>
           <li>
-            At race time, the secret value is revealed and fed into a simple, public, deterministic
-            shuffle function. Anyone can re-run it and get the exact same result.
+            When it&apos;s go time, the safe opens and the secret code comes out. That code gets
+            run through a simple math formula (the same one every time, and it&apos;s public) to
+            decide the draft order. Anyone can grab the same code and run the same formula
+            themselves to check they get the exact same result.
           </li>
         </ol>
 
@@ -96,7 +99,7 @@ export function FairnessExplainer({
             )}
           </div>
         ) : (
-          <p className="text-xs text-chalk-faint">The secret value stays hidden until the race starts.</p>
+          <p className="text-xs text-chalk-faint">The secret code stays hidden until the race starts.</p>
         )}
       </div>
     </details>

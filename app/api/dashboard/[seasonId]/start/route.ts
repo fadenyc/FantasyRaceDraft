@@ -1,15 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSeasonByAdminToken } from "@/lib/db/admin";
+import { getSeasonByIdForOwner } from "@/lib/db/admin";
 import { revealAndStartRace } from "@/lib/db/race";
-import { createServiceRoleClient } from "@/lib/supabase/server";
+import { createServiceRoleClient, createSessionClient } from "@/lib/supabase/server";
 
+/** Owner-session equivalent of /api/admin/[adminToken]/start. */
 export async function POST(
   _request: NextRequest,
-  { params }: { params: Promise<{ adminToken: string }> },
+  { params }: { params: Promise<{ seasonId: string }> },
 ) {
-  const { adminToken } = await params;
+  const { seasonId } = await params;
+
+  const sessionClient = await createSessionClient();
+  const {
+    data: { user },
+  } = await sessionClient.auth.getUser();
+  if (!user) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
+
   const supabase = createServiceRoleClient();
-  const season = await getSeasonByAdminToken(supabase, adminToken);
+  const season = await getSeasonByIdForOwner(supabase, seasonId, user.id);
   if (!season) return NextResponse.json({ error: "Not found." }, { status: 404 });
 
   try {

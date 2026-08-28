@@ -13,12 +13,18 @@ export interface PublicSeason {
   reveal_seed_uint32: number | null;
   final_order: string[] | null;
   revealed_at: string | null;
+  /** How long the animated race takes to play out, in seconds. Purely cosmetic — never affects the shuffle result. */
+  race_duration_seconds: number;
+  /** Number of rounds to expand into a full snake draft board. Null/0 — commissioner hasn't enabled it. */
+  snake_draft_rounds: number | null;
   created_at: string;
 }
 
 /** Full row shape, server-side only (service role client) — includes admin_token. */
 export interface Season extends PublicSeason {
   admin_token: string;
+  /** Set only for seasons created by a signed-in commissioner; null for legacy (admin-link-only) seasons. */
+  owner_user_id: string | null;
 }
 
 export interface Team {
