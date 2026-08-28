@@ -59,27 +59,22 @@ function getBank(): AudioBank | null {
 
 /**
  * Call synchronously inside the sound-toggle's onClick — see the module
- * doc comment above for why. Playing then immediately pausing each
- * element unlocks it without anything audible happening.
+ * doc comment above for why. Playing then pausing each element unlocks it
+ * without anything audible happening — pause() runs synchronously, in the
+ * same tick as play(), specifically so it can't race a real play() call
+ * from elsewhere (e.g. startWaitingRoomAmbience firing moments later, once
+ * soundEnabled flips true). Waiting for the play() promise to resolve
+ * before pausing — the previous approach — left a window where that real
+ * playback could start first and then get stomped by this delayed pause.
  */
 export function unlockAudio(): void {
   const b = getBank();
   if (!b) return;
   for (const el of [b.waitingRoom, b.kickoff, b.raceComplete, ...b.running]) {
-    const wasLooping = el.loop;
-    el.loop = false;
     const playPromise = el.play();
-    if (playPromise) {
-      playPromise
-        .then(() => {
-          el.pause();
-          el.currentTime = 0;
-          el.loop = wasLooping;
-        })
-        .catch(() => {
-          el.loop = wasLooping;
-        });
-    }
+    el.pause();
+    el.currentTime = 0;
+    if (playPromise) playPromise.catch(() => {});
   }
 }
 
