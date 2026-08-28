@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ChatMessage, Claim, PublicSeason, Team } from "@/lib/db/types";
 import { createBrowserClient } from "@/lib/supabase/client";
 import { PREROLL_MS, RaceCanvas } from "@/components/race/RaceCanvas";
+import { computeRacePositions } from "@/lib/race/animation";
 import { RaceResultsTable } from "@/components/race/RaceResultsTable";
 import { SnakeDraftBoard } from "@/components/race/SnakeDraftBoard";
 import { FloatingEmojiOverlay, type EmojiBurst } from "@/components/race/FloatingEmoji";
@@ -26,6 +27,7 @@ import {
   startWaitingRoomAmbience,
   stopRunningSounds,
   stopWaitingRoomAmbience,
+  unlockAudio,
 } from "@/lib/audio/sfx";
 
 interface SeasonViewProps {
@@ -203,14 +205,32 @@ export function SeasonView({
   }, [raceIsShowing, soundEnabled]);
 
   // Footsteps start once the READY/SET/GO preroll ends — that's when
-  // runners actually start moving in the animation — and stop as soon as
-  // the race is no longer showing (finished, or the page moved on).
+  // runners actually start moving in the animation — and their pacing
+  // tracks how many runners are actually still going, computed from the
+  // same pure position math RaceCanvas uses for the visuals. The scheduler
+  // reads season.revealed_at/final_order/reveal_seed_uint32 fresh on every
+  // tick via a ref (not effect deps) so it doesn't need to restart itself
+  // as those settle in; it stops itself once every runner's finished.
+  const raceSoundStateRef = useRef({ season, raceComplete });
+  useEffect(() => {
+    raceSoundStateRef.current = { season, raceComplete };
+  }, [season, raceComplete]);
   useEffect(() => {
     if (!soundEnabled || !raceIsShowing) {
       stopRunningSounds();
       return;
     }
-    const timer = setTimeout(startRunningSounds, PREROLL_MS);
+    const timer = setTimeout(() => {
+      startRunningSounds(() => {
+        const { season: s, raceComplete: done } = raceSoundStateRef.current;
+        if (done || !s.revealed_at || !s.final_order || s.reveal_seed_uint32 === null) return 0;
+        const elapsed = Date.now() - new Date(s.revealed_at).getTime();
+        const durationMs = (s.race_duration_seconds ?? 60) * 1000;
+        const positions = computeRacePositions(s.reveal_seed_uint32, s.final_order, elapsed, durationMs);
+        const activeCount = positions.filter((p) => !p.finished).length;
+        return positions.length > 0 ? activeCount / positions.length : 0;
+      });
+    }, PREROLL_MS);
     return () => {
       clearTimeout(timer);
       stopRunningSounds();
@@ -299,7 +319,14 @@ export function SeasonView({
         </div>
         <button
           type="button"
-          onClick={toggleSound}
+          onClick={() => {
+            // Must happen synchronously in this click handler — see the
+            // doc comment on unlockAudio() for why every later sound
+            // (kickoff, footsteps, race-complete) depends on this exact
+            // call happening here rather than in an effect.
+            unlockAudio();
+            toggleSound();
+          }}
           aria-label={soundEnabled ? "Turn sound off" : "Turn sound on"}
           title={soundEnabled ? "Sound on" : "Sound off"}
           className="shrink-0 rounded-full border border-turf-600 bg-turf-800 px-3 py-2 text-lg hover:border-endzone-500 hover:bg-turf-700"

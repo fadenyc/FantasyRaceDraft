@@ -1,82 +1,160 @@
 /**
  * Sound effects. Most of these are real audio files (public/sounds/) —
  * claim confirmation and reaction-tap stay synthesized via the Web Audio
- * API since no file was provided for those, and they're tiny enough that a
- * synthesized blip is unnoticeable next to the recorded sounds.
+ * API since no file was provided for those.
+ *
+ * Every file-based sound reuses a small set of persistent HTMLAudioElement
+ * instances rather than `new Audio()` per play. That's not just tidiness —
+ * strict autoplay policies (iOS Safari in particular) only allow a given
+ * <audio> element to play without a fresh user gesture if THAT SAME
+ * element already played (even silently) during a real gesture earlier in
+ * the page's life. A freshly constructed Audio() later, even one playing
+ * an already-"unlocked" URL, starts locked again. So every sound this
+ * module can ever play gets built once, unlocked once (via unlockAudio(),
+ * called synchronously from the sound-toggle's onClick — the only genuine
+ * user gesture in this flow), and reused for every subsequent play.
  */
 
-const SOUNDS = {
+const SOUND_SRC = {
   waitingRoom: "/sounds/waitingroom.mp3",
   kickoff: "/sounds/whentheracestart.mp3",
   raceComplete: "/sounds/racecomplete.mp3",
   running: ["/sounds/running1.mp3", "/sounds/running2.mp3", "/sounds/running3.mp3"],
 } as const;
 
-function playOneShot(src: string, volume = 0.6): void {
-  if (typeof window === "undefined") return;
-  const audio = new Audio(src);
-  audio.volume = volume;
-  void audio.play().catch(() => {
-    // Autoplay can still be blocked in edge cases; nothing useful to do.
+interface AudioBank {
+  waitingRoom: HTMLAudioElement;
+  kickoff: HTMLAudioElement;
+  raceComplete: HTMLAudioElement;
+  running: HTMLAudioElement[];
+}
+
+let bank: AudioBank | null = null;
+
+function buildBank(): AudioBank {
+  const waitingRoom = new Audio(SOUND_SRC.waitingRoom);
+  waitingRoom.loop = true;
+  waitingRoom.volume = 0.3;
+
+  const kickoff = new Audio(SOUND_SRC.kickoff);
+  kickoff.volume = 0.7;
+
+  const raceComplete = new Audio(SOUND_SRC.raceComplete);
+  raceComplete.volume = 0.7;
+
+  const running = SOUND_SRC.running.map((src) => {
+    const el = new Audio(src);
+    el.volume = 0.35;
+    return el;
   });
+
+  return { waitingRoom, kickoff, raceComplete, running };
 }
 
-/** Plays once when the race actually kicks off. */
+function getBank(): AudioBank | null {
+  if (typeof window === "undefined") return null;
+  if (!bank) bank = buildBank();
+  return bank;
+}
+
+/**
+ * Call synchronously inside the sound-toggle's onClick — see the module
+ * doc comment above for why. Playing then immediately pausing each
+ * element unlocks it without anything audible happening.
+ */
+export function unlockAudio(): void {
+  const b = getBank();
+  if (!b) return;
+  for (const el of [b.waitingRoom, b.kickoff, b.raceComplete, ...b.running]) {
+    const wasLooping = el.loop;
+    el.loop = false;
+    const playPromise = el.play();
+    if (playPromise) {
+      playPromise
+        .then(() => {
+          el.pause();
+          el.currentTime = 0;
+          el.loop = wasLooping;
+        })
+        .catch(() => {
+          el.loop = wasLooping;
+        });
+    }
+  }
+}
+
 export function playKickoff(): void {
-  playOneShot(SOUNDS.kickoff, 0.7);
+  const b = getBank();
+  if (!b) return;
+  b.kickoff.currentTime = 0;
+  void b.kickoff.play().catch(() => {});
 }
 
-/** Plays once when the race finishes. */
 export function playRaceComplete(): void {
-  playOneShot(SOUNDS.raceComplete, 0.7);
+  const b = getBank();
+  if (!b) return;
+  b.raceComplete.currentTime = 0;
+  void b.raceComplete.play().catch(() => {});
 }
 
-let waitingRoomAudio: HTMLAudioElement | null = null;
-
-/** Loops the waiting-room ambience. Idempotent — a second call while already playing does nothing. */
 export function startWaitingRoomAmbience(): void {
-  if (typeof window === "undefined" || waitingRoomAudio) return;
-  const audio = new Audio(SOUNDS.waitingRoom);
-  audio.loop = true;
-  audio.volume = 0.3;
-  void audio.play().catch(() => {});
-  waitingRoomAudio = audio;
+  const b = getBank();
+  if (!b) return;
+  void b.waitingRoom.play().catch(() => {});
 }
 
 export function stopWaitingRoomAmbience(): void {
-  if (!waitingRoomAudio) return;
-  waitingRoomAudio.pause();
-  waitingRoomAudio = null;
+  if (!bank) return;
+  bank.waitingRoom.pause();
+  bank.waitingRoom.currentTime = 0;
+}
+
+let lastRunningIndex = -1;
+
+function playRunningOnce(volumeScale: number): void {
+  const b = getBank();
+  if (!b) return;
+  let index = Math.floor(Math.random() * b.running.length);
+  if (b.running.length > 1 && index === lastRunningIndex) {
+    index = (index + 1) % b.running.length;
+  }
+  lastRunningIndex = index;
+  const el = b.running[index];
+  el.currentTime = 0;
+  el.volume = Math.max(0, Math.min(1, 0.35 * volumeScale));
+  void el.play().catch(() => {});
 }
 
 let runningTimer: ReturnType<typeof setTimeout> | null = null;
-let lastRunningIndex = -1;
 
-const RUNNING_DELAY_MIN_MS = 260;
-const RUNNING_DELAY_MAX_MS = 460;
+const RUNNING_DELAY_MIN_MS = 220;
+const RUNNING_DELAY_MAX_MS = 380;
 
 /**
- * Footsteps during the race: one clip at a time, picked so the same clip
- * never repeats twice in a row, spaced out with a randomized gap rather
- * than looped back-to-back — that gap is what keeps it sounding like an
- * actual running cadence instead of a mechanical loop.
+ * Footsteps, driven by how much of the field is still actually running —
+ * not a flat loop. `getActiveFraction` should return 0..1 (1 = everyone
+ * still going, 0 = everyone's finished); callers derive this from the same
+ * pure race-position math the visual animation uses, so the sound tracks
+ * what's actually on screen. Density thins out as runners finish — longer
+ * gaps, quieter — and the scheduler stops itself the moment the fraction
+ * hits 0, rather than needing a separate "the race is over" signal.
  */
-export function startRunningSounds(): void {
+export function startRunningSounds(getActiveFraction: () => number): void {
   if (typeof window === "undefined" || runningTimer) return;
 
-  function playNext() {
-    let index = Math.floor(Math.random() * SOUNDS.running.length);
-    if (SOUNDS.running.length > 1 && index === lastRunningIndex) {
-      index = (index + 1) % SOUNDS.running.length;
+  function tick() {
+    const fraction = getActiveFraction();
+    if (fraction <= 0) {
+      runningTimer = null;
+      return;
     }
-    lastRunningIndex = index;
-    playOneShot(SOUNDS.running[index], 0.35);
-
-    const delay = RUNNING_DELAY_MIN_MS + Math.random() * (RUNNING_DELAY_MAX_MS - RUNNING_DELAY_MIN_MS);
-    runningTimer = setTimeout(playNext, delay);
+    playRunningOnce(0.4 + fraction * 0.6);
+    const spread = RUNNING_DELAY_MAX_MS - RUNNING_DELAY_MIN_MS;
+    // Fewer runners still going → sparser footsteps.
+    const delay = RUNNING_DELAY_MIN_MS + Math.random() * spread + (1 - fraction) * 350;
+    runningTimer = setTimeout(tick, delay);
   }
-
-  playNext();
+  tick();
 }
 
 export function stopRunningSounds(): void {
