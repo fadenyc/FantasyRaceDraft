@@ -1,10 +1,90 @@
 /**
- * Every sound here is synthesized on the fly via the Web Audio API — no
- * audio files, no licensing to worry about, and nothing to download. Lazily
- * creates one shared AudioContext on first use, which also happens to be
- * exactly what unlocks it under browser autoplay policy: it's only ever
- * created inside a real click handler (the sound toggle), never on mount.
+ * Sound effects. Most of these are real audio files (public/sounds/) —
+ * claim confirmation and reaction-tap stay synthesized via the Web Audio
+ * API since no file was provided for those, and they're tiny enough that a
+ * synthesized blip is unnoticeable next to the recorded sounds.
  */
+
+const SOUNDS = {
+  waitingRoom: "/sounds/waitingroom.mp3",
+  kickoff: "/sounds/whentheracestart.mp3",
+  raceComplete: "/sounds/racecomplete.mp3",
+  running: ["/sounds/running1.mp3", "/sounds/running2.mp3", "/sounds/running3.mp3"],
+} as const;
+
+function playOneShot(src: string, volume = 0.6): void {
+  if (typeof window === "undefined") return;
+  const audio = new Audio(src);
+  audio.volume = volume;
+  void audio.play().catch(() => {
+    // Autoplay can still be blocked in edge cases; nothing useful to do.
+  });
+}
+
+/** Plays once when the race actually kicks off. */
+export function playKickoff(): void {
+  playOneShot(SOUNDS.kickoff, 0.7);
+}
+
+/** Plays once when the race finishes. */
+export function playRaceComplete(): void {
+  playOneShot(SOUNDS.raceComplete, 0.7);
+}
+
+let waitingRoomAudio: HTMLAudioElement | null = null;
+
+/** Loops the waiting-room ambience. Idempotent — a second call while already playing does nothing. */
+export function startWaitingRoomAmbience(): void {
+  if (typeof window === "undefined" || waitingRoomAudio) return;
+  const audio = new Audio(SOUNDS.waitingRoom);
+  audio.loop = true;
+  audio.volume = 0.3;
+  void audio.play().catch(() => {});
+  waitingRoomAudio = audio;
+}
+
+export function stopWaitingRoomAmbience(): void {
+  if (!waitingRoomAudio) return;
+  waitingRoomAudio.pause();
+  waitingRoomAudio = null;
+}
+
+let runningTimer: ReturnType<typeof setTimeout> | null = null;
+let lastRunningIndex = -1;
+
+const RUNNING_DELAY_MIN_MS = 260;
+const RUNNING_DELAY_MAX_MS = 460;
+
+/**
+ * Footsteps during the race: one clip at a time, picked so the same clip
+ * never repeats twice in a row, spaced out with a randomized gap rather
+ * than looped back-to-back — that gap is what keeps it sounding like an
+ * actual running cadence instead of a mechanical loop.
+ */
+export function startRunningSounds(): void {
+  if (typeof window === "undefined" || runningTimer) return;
+
+  function playNext() {
+    let index = Math.floor(Math.random() * SOUNDS.running.length);
+    if (SOUNDS.running.length > 1 && index === lastRunningIndex) {
+      index = (index + 1) % SOUNDS.running.length;
+    }
+    lastRunningIndex = index;
+    playOneShot(SOUNDS.running[index], 0.35);
+
+    const delay = RUNNING_DELAY_MIN_MS + Math.random() * (RUNNING_DELAY_MAX_MS - RUNNING_DELAY_MIN_MS);
+    runningTimer = setTimeout(playNext, delay);
+  }
+
+  playNext();
+}
+
+export function stopRunningSounds(): void {
+  if (runningTimer) {
+    clearTimeout(runningTimer);
+    runningTimer = null;
+  }
+}
 
 let ctx: AudioContext | null = null;
 
@@ -46,40 +126,6 @@ export function playChime(): void {
   });
 }
 
-/** Referee whistle — plays once when the race actually kicks off. */
-export function playWhistle(): void {
-  const audio = getContext();
-  if (!audio) return;
-  const now = audio.currentTime;
-  const osc = audio.createOscillator();
-  const gain = audio.createGain();
-  osc.type = "square";
-  osc.frequency.setValueAtTime(2200, now);
-  osc.frequency.linearRampToValueAtTime(2600, now + 0.15);
-  osc.frequency.linearRampToValueAtTime(2200, now + 0.35);
-  osc.connect(gain).connect(audio.destination);
-  envelope(gain, now, 0.02, 0.3, 0.15, 0.2);
-  osc.start(now);
-  osc.stop(now + 0.55);
-}
-
-/** Two-tone air horn — plays once when the race finishes. */
-export function playAirHorn(): void {
-  const audio = getContext();
-  if (!audio) return;
-  const now = audio.currentTime;
-  [220, 330].forEach((freq) => {
-    const osc = audio.createOscillator();
-    const gain = audio.createGain();
-    osc.type = "sawtooth";
-    osc.frequency.value = freq;
-    osc.connect(gain).connect(audio.destination);
-    envelope(gain, now, 0.05, 0.5, 0.3, 0.16);
-    osc.start(now);
-    osc.stop(now + 0.9);
-  });
-}
-
 /** Light tap — local feedback when you send a reaction emoji. */
 export function playTap(): void {
   const audio = getContext();
@@ -93,81 +139,4 @@ export function playTap(): void {
   envelope(gain, now, 0.005, 0.03, 0.05, 0.12);
   osc.start(now);
   osc.stop(now + 0.1);
-}
-
-interface MurmurHandle {
-  sources: AudioBufferSourceNode[];
-  gain: GainNode;
-  lfo: OscillatorNode;
-}
-
-let murmur: MurmurHandle | null = null;
-
-function makeNoiseBuffer(audio: AudioContext, seconds: number): AudioBuffer {
-  const length = audio.sampleRate * seconds;
-  const buffer = audio.createBuffer(1, length, audio.sampleRate);
-  const data = buffer.getChannelData(0);
-  for (let i = 0; i < length; i++) data[i] = Math.random() * 2 - 1;
-  return buffer;
-}
-
-/**
- * Low, textured stadium hum for the waiting room — two filtered noise loops
- * plus a slow LFO on the filter frequency so it breathes a little instead of
- * sitting as flat static. It reads as ambient crowd presence, not a
- * recording of an actual crowd — that's the honest ceiling of what's
- * achievable without a real audio asset.
- */
-export function startCrowdMurmur(): void {
-  const audio = getContext();
-  if (!audio || murmur) return;
-
-  const gain = audio.createGain();
-  gain.gain.value = 0;
-  gain.connect(audio.destination);
-
-  const lfo = audio.createOscillator();
-  lfo.type = "sine";
-  lfo.frequency.value = 0.15;
-  const lfoGain = audio.createGain();
-  lfoGain.gain.value = 120;
-
-  const sources: AudioBufferSourceNode[] = [];
-  [{ freq: 300, seconds: 3 }, { freq: 220, seconds: 4 }].forEach(({ freq, seconds }) => {
-    const source = audio.createBufferSource();
-    source.buffer = makeNoiseBuffer(audio, seconds);
-    source.loop = true;
-
-    const filter = audio.createBiquadFilter();
-    filter.type = "bandpass";
-    filter.frequency.value = freq;
-    filter.Q.value = 0.7;
-
-    lfo.connect(lfoGain).connect(filter.frequency);
-    source.connect(filter).connect(gain);
-    source.start();
-    sources.push(source);
-  });
-
-  lfo.start();
-  gain.gain.linearRampToValueAtTime(0.035, audio.currentTime + 1.5);
-
-  murmur = { sources, gain, lfo };
-}
-
-export function stopCrowdMurmur(): void {
-  if (!murmur) return;
-  const audio = getContext();
-  const handle = murmur;
-  murmur = null;
-  if (!audio) {
-    handle.sources.forEach((s) => s.stop());
-    handle.lfo.stop();
-    return;
-  }
-  handle.gain.gain.linearRampToValueAtTime(0, audio.currentTime + 0.5);
-  setTimeout(() => {
-    handle.sources.forEach((s) => s.stop());
-    handle.lfo.stop();
-  }, 600);
 }

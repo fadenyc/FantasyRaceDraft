@@ -32,7 +32,7 @@ const DESKTOP_BREAKPOINT = "(min-width: 640px)";
 const READY_MS = 650;
 const SET_MS = 650;
 const GO_MS = 500;
-const PREROLL_MS = READY_MS + SET_MS + GO_MS;
+export const PREROLL_MS = READY_MS + SET_MS + GO_MS;
 
 const FINISH_SETTLE_MS = 450;
 const HIGHLIGHT_MS = 700;

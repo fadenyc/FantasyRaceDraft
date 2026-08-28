@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ChatMessage, Claim, PublicSeason, Team } from "@/lib/db/types";
 import { createBrowserClient } from "@/lib/supabase/client";
-import { RaceCanvas } from "@/components/race/RaceCanvas";
+import { PREROLL_MS, RaceCanvas } from "@/components/race/RaceCanvas";
 import { RaceResultsTable } from "@/components/race/RaceResultsTable";
 import { SnakeDraftBoard } from "@/components/race/SnakeDraftBoard";
 import { FloatingEmojiOverlay, type EmojiBurst } from "@/components/race/FloatingEmoji";
@@ -17,7 +17,16 @@ import { Countdown } from "@/components/shared/Countdown";
 import { ChatPanel } from "@/components/chat/ChatPanel";
 import { GRACE_PERIOD_MINUTES } from "@/lib/constants";
 import { useSoundEnabled } from "@/components/shared/useSoundEnabled";
-import { playAirHorn, playChime, playTap, playWhistle, startCrowdMurmur, stopCrowdMurmur } from "@/lib/audio/sfx";
+import {
+  playChime,
+  playKickoff,
+  playRaceComplete,
+  playTap,
+  startRunningSounds,
+  startWaitingRoomAmbience,
+  stopRunningSounds,
+  stopWaitingRoomAmbience,
+} from "@/lib/audio/sfx";
 
 interface SeasonViewProps {
   publicToken: string;
@@ -171,14 +180,14 @@ export function SeasonView({
 
   const raceIsShowing = season.status === "revealed" && season.final_order && season.reveal_seed_uint32 !== null;
 
-  // Ambient stadium hum while everyone's waiting — stops the moment the race starts.
+  // Ambient waiting-room track while everyone's waiting — stops the moment the race starts.
   useEffect(() => {
     if (!soundEnabled || raceIsShowing) {
-      stopCrowdMurmur();
+      stopWaitingRoomAmbience();
       return;
     }
-    startCrowdMurmur();
-    return () => stopCrowdMurmur();
+    startWaitingRoomAmbience();
+    return () => stopWaitingRoomAmbience();
   }, [soundEnabled, raceIsShowing]);
 
   const hasPlayedKickoffRef = useRef(false);
@@ -189,12 +198,28 @@ export function SeasonView({
     }
     if (soundEnabled && !hasPlayedKickoffRef.current) {
       hasPlayedKickoffRef.current = true;
-      playWhistle();
+      playKickoff();
     }
   }, [raceIsShowing, soundEnabled]);
 
+  // Footsteps start once the READY/SET/GO preroll ends — that's when
+  // runners actually start moving in the animation — and stop as soon as
+  // the race is no longer showing (finished, or the page moved on).
   useEffect(() => {
-    if (raceComplete && soundEnabled) playAirHorn();
+    if (!soundEnabled || !raceIsShowing) {
+      stopRunningSounds();
+      return;
+    }
+    const timer = setTimeout(startRunningSounds, PREROLL_MS);
+    return () => {
+      clearTimeout(timer);
+      stopRunningSounds();
+    };
+  }, [soundEnabled, raceIsShowing]);
+
+  useEffect(() => {
+    if (raceComplete) stopRunningSounds();
+    if (raceComplete && soundEnabled) playRaceComplete();
   }, [raceComplete, soundEnabled]);
 
   async function claimTeam(teamId: string) {
