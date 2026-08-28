@@ -61,6 +61,20 @@ export function SeasonView({
   const clientToken = useClientToken(publicToken);
   const broadcastChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
 
+  // toLocaleString() formats by the runtime's timezone/locale, which
+  // differs between the server and a visitor's browser — rendering it
+  // directly during SSR causes a real hydration mismatch for anyone outside
+  // the server's timezone. Stays blank through SSR and the first client
+  // render, then fills in from an effect once it's safe to format.
+  const [scheduledLabel, setScheduledLabel] = useState("");
+  useEffect(() => {
+    const label = season.scheduled_at ? new Date(season.scheduled_at).toLocaleString() : "";
+    // One-time sync from a post-hydration-only source (the browser's own
+    // locale) — not a state loop, this only re-runs if scheduled_at changes.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setScheduledLabel(label);
+  }, [season.scheduled_at]);
+
   const teams = initialTeams; // roster is immutable once players are picking; commissioner edits pre-commit only
   const teamNameById = useMemo(
     () => Object.fromEntries(teams.map((t) => [t.id, t.name])),
@@ -253,10 +267,8 @@ export function SeasonView({
       <div className="flex w-full items-start justify-between gap-2">
         <div className="flex flex-col gap-2">
           <h1 className="font-display text-4xl tracking-wide text-chalk">{season.name}</h1>
-          {season.scheduled_at && (
-            <p className="text-sm text-chalk-muted">
-              Scheduled for {new Date(season.scheduled_at).toLocaleString()}
-            </p>
+          {season.scheduled_at && scheduledLabel && (
+            <p className="text-sm text-chalk-muted">Scheduled for {scheduledLabel}</p>
           )}
           <PresenceAvatars entries={presence} />
         </div>

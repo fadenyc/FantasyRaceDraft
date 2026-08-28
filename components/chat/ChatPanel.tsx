@@ -35,6 +35,9 @@ export function ChatPanel({ publicToken, seasonId, teams, initialMessages, clien
   // place rather than patching it, so the input would stay stuck forever.
   // Rendering "not ready" through the first client render (matching SSR
   // exactly), then flipping via an effect once mounted, avoids that.
+  // Also gates the per-message toLocaleTimeString() calls below — those
+  // format by the runtime's timezone/locale, which differs between server
+  // and a visitor's browser, so they can't render until after mount either.
   const [mounted, setMounted] = useState(false);
   useEffect(() => {
     // Deliberately only flips post-hydration — that's the entire point of
@@ -111,7 +114,9 @@ export function ChatPanel({ publicToken, seasonId, teams, initialMessages, clien
               <div className="min-w-0 flex-1">
                 <div className="flex items-baseline gap-2">
                   <span className="truncate text-xs font-semibold text-chalk">{teamName}</span>
-                  <span className="shrink-0 text-[10px] text-chalk-faint">{formatTime(message.created_at)}</span>
+                  <span className="shrink-0 text-[10px] text-chalk-faint">
+                    {mounted ? formatTime(message.created_at) : ""}
+                  </span>
                 </div>
                 <div className="break-words text-sm text-chalk-muted">{message.body}</div>
               </div>

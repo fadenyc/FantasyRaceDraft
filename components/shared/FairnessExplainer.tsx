@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { sha256Hex } from "@/lib/fairness/hash";
 
 interface FairnessExplainerProps {
@@ -19,6 +19,19 @@ export function FairnessExplainer({
   const [verifyResult, setVerifyResult] = useState<"idle" | "checking" | "match" | "mismatch">(
     "idle",
   );
+
+  // toLocaleString() formats by the runtime's timezone/locale, which differs
+  // between the server (wherever it's deployed) and a visitor's browser —
+  // rendering it directly causes a real hydration mismatch for anyone
+  // outside the server's timezone. Stays blank through SSR and the first
+  // client render, then fills in from an effect once it's safe to format
+  // using the browser's own locale.
+  const [publishedLabel, setPublishedLabel] = useState("");
+  useEffect(() => {
+    if (!commitmentPublishedAt) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setPublishedLabel(` (${new Date(commitmentPublishedAt).toLocaleString()})`);
+  }, [commitmentPublishedAt]);
 
   async function verify() {
     if (!serverSeed || !commitmentHash) return;
@@ -56,7 +69,7 @@ export function FairnessExplainer({
         {commitmentHash && (
           <div>
             <div className="text-xs uppercase tracking-wide text-chalk-faint">
-              Published fingerprint{commitmentPublishedAt ? ` (${new Date(commitmentPublishedAt).toLocaleString()})` : ""}
+              Published fingerprint{publishedLabel}
             </div>
             <code className="mt-1 block break-all rounded bg-turf-900 p-2 text-xs text-field-400">
               {commitmentHash}
