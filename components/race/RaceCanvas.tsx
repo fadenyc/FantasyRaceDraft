@@ -354,7 +354,13 @@ export function RaceCanvas({
                   ref={(el) => {
                     getRefs(team.id).streak = el;
                   }}
-                  className="pointer-events-none absolute right-full top-1/2 h-1.5 w-6 -translate-y-1/2 rounded-full bg-gradient-to-l from-chalk/70 to-transparent opacity-0 sm:w-9"
+                  // The sprite frame has ~25-30% transparent padding before
+                  // the character's trailing edge (measured directly from
+                  // the sheet: left-edge pixels start around x=0.21-0.36 of
+                  // each frame across the run cycle) — right-full would sit
+                  // flush with the wrapper's raw edge, leaving a visible
+                  // gap between the streak and the visible character.
+                  className="pointer-events-none absolute right-[72%] top-1/2 h-1.5 w-5 -translate-y-1/2 rounded-full bg-gradient-to-l from-chalk/70 to-transparent opacity-0 sm:w-7"
                 />
                 <div
                   ref={(el) => {
