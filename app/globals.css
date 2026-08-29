@@ -67,10 +67,33 @@ a {
 
 body {
   background-color: var(--color-turf-950);
-  /* Ellipse sizes scale with the viewport (clamped between a floor and the
-     original fixed size as a ceiling) instead of a flat pixel size — a
-     fixed size looks oversized on a narrow phone and undersized on a wide
-     desktop, since it doesn't scale with how much space it's covering. */
+  color: var(--color-chalk);
+}
+
+/*
+ * The corner-glow gradients live on a fixed, viewport-sized layer rather
+ * than directly on body's own background. body's background-position
+ * percentages resolve against body's own (content-driven) height — on any
+ * page taller than about one viewport, "at 10% -15%" and "at 110% 10%"
+ * only reach a few hundred px down before fading out, and "at 50% 120%"
+ * lands past the bottom of the document entirely, never visible. Result:
+ * real glow for the first stretch of the page, flat background-color for
+ * everything after, and the bottom glow never appearing anywhere — a hard,
+ * visible cutoff partway down any page with more than a screenful of
+ * content (verified: on a 2270px document, the top glows fully fade out
+ * by ~600px, and the bottom glow's center sits at y≈2724px).
+ *
+ * `position: fixed; inset: 0` sizes this layer to the viewport itself (not
+ * 100vh, not the document), so the same percentages stay anchored to the
+ * screen's corners at every scroll position — the glow is simply always
+ * present in whatever's currently visible, for a document of any length.
+ */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
   background-image:
     radial-gradient(
       ellipse clamp(320px, 70vw, 900px) clamp(260px, 55vh, 650px) at 10% -15%,
@@ -88,7 +111,6 @@ body {
       transparent
     );
   background-repeat: no-repeat;
-  color: var(--color-chalk);
 }
 
 @keyframes float-up {
