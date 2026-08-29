@@ -44,7 +44,7 @@ interface RaceStartPayload {
   raceStartAt: string;
 }
 
-const REACTION_EMOJIS = ["🏈", "👏", "🔥", "🏃", "🍺", "🎉", "💪", "😂"];
+const REACTION_EMOJIS = ["🏈", "👏", "🔥", "🏃", "🍺", "🎉", "💪", "🚀", "😂"];
 
 const ORDINALS = [
   "1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th", "9th", "10th", "11th", "12th",
@@ -68,6 +68,7 @@ export function SeasonView({
   const [claimError, setClaimError] = useState<string | null>(null);
   const [floaters, setFloaters] = useState<EmojiBurst[]>([]);
   const [raceComplete, setRaceComplete] = useState(false);
+  const [replayStartAt, setReplayStartAt] = useState<string | null>(null);
   const [soundEnabled, toggleSound] = useSoundEnabled();
   const clientToken = useClientToken(publicToken);
   const broadcastChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
@@ -181,6 +182,11 @@ export function SeasonView({
   }, [season.status, season.scheduled_at, publicToken]);
 
   const raceIsShowing = season.status === "revealed" && season.final_order && season.reveal_seed_uint32 !== null;
+  // The timestamp actually driving the animation right now — the original
+  // reveal, or a fresh one if someone's watching a replay. Sound effects
+  // key off this (not just raceIsShowing) so a replay re-triggers kickoff/
+  // footsteps/finish exactly like the first watch did.
+  const raceEpoch = raceIsShowing ? (replayStartAt ?? season.revealed_at) : null;
 
   // Ambient waiting-room track while everyone's waiting — stops the moment the race starts.
   useEffect(() => {
@@ -192,39 +198,41 @@ export function SeasonView({
     return () => stopWaitingRoomAmbience();
   }, [soundEnabled, raceIsShowing]);
 
-  const hasPlayedKickoffRef = useRef(false);
+  // Tracks which epoch's kickoff already played (not just a boolean) so a
+  // replay — a new epoch, same raceIsShowing=true — plays it again too.
+  const hasPlayedKickoffForEpochRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!raceIsShowing) {
-      hasPlayedKickoffRef.current = false;
-      return;
-    }
-    if (soundEnabled && !hasPlayedKickoffRef.current) {
-      hasPlayedKickoffRef.current = true;
+    if (!raceEpoch) return;
+    if (soundEnabled && hasPlayedKickoffForEpochRef.current !== raceEpoch) {
+      hasPlayedKickoffForEpochRef.current = raceEpoch;
       playKickoff();
     }
-  }, [raceIsShowing, soundEnabled]);
+  }, [raceEpoch, soundEnabled]);
 
   // Footsteps start once the READY/SET/GO preroll ends — that's when
   // runners actually start moving in the animation — and their pacing
   // tracks how many runners are actually still going, computed from the
   // same pure position math RaceCanvas uses for the visuals. The scheduler
-  // reads season.revealed_at/final_order/reveal_seed_uint32 fresh on every
-  // tick via a ref (not effect deps) so it doesn't need to restart itself
-  // as those settle in; it stops itself once every runner's finished.
-  const raceSoundStateRef = useRef({ season, raceComplete });
+  // reads season/raceEpoch/raceComplete fresh on every tick via a ref (not
+  // effect deps) so it doesn't need to restart itself as those settle in;
+  // it stops itself once every runner's finished. Restarting the whole
+  // effect on raceEpoch (not just raceIsShowing) is what makes a replay's
+  // footsteps play again instead of staying silent (season.revealed_at
+  // alone never changes on replay, only raceEpoch does).
+  const raceSoundStateRef = useRef({ season, raceComplete, raceEpoch });
   useEffect(() => {
-    raceSoundStateRef.current = { season, raceComplete };
-  }, [season, raceComplete]);
+    raceSoundStateRef.current = { season, raceComplete, raceEpoch };
+  }, [season, raceComplete, raceEpoch]);
   useEffect(() => {
-    if (!soundEnabled || !raceIsShowing) {
+    if (!soundEnabled || !raceEpoch) {
       stopRunningSounds();
       return;
     }
     const timer = setTimeout(() => {
       startRunningSounds(() => {
-        const { season: s, raceComplete: done } = raceSoundStateRef.current;
-        if (done || !s.revealed_at || !s.final_order || s.reveal_seed_uint32 === null) return 0;
-        const elapsed = Date.now() - new Date(s.revealed_at).getTime();
+        const { season: s, raceComplete: done, raceEpoch: epoch } = raceSoundStateRef.current;
+        if (done || !epoch || !s.final_order || s.reveal_seed_uint32 === null) return 0;
+        const elapsed = Date.now() - new Date(epoch).getTime();
         const durationMs = (s.race_duration_seconds ?? 60) * 1000;
         const positions = computeRacePositions(s.reveal_seed_uint32, s.final_order, elapsed, durationMs);
         const activeCount = positions.filter((p) => !p.finished).length;
@@ -235,7 +243,7 @@ export function SeasonView({
       clearTimeout(timer);
       stopRunningSounds();
     };
-  }, [soundEnabled, raceIsShowing]);
+  }, [soundEnabled, raceEpoch]);
 
   useEffect(() => {
     if (raceComplete) stopRunningSounds();
@@ -299,10 +307,14 @@ export function SeasonView({
     setFloaters((prev) => prev.filter((f) => f.id !== id));
   }
 
-  const clockMode: ClockMode =
-    season.status === "revealed" && season.revealed_at
-      ? { mode: "live", raceStartAt: season.revealed_at }
-      : { mode: "idle" };
+  const clockMode: ClockMode = raceEpoch ? { mode: "live", raceStartAt: raceEpoch } : { mode: "idle" };
+
+  // Replays the exact same deterministic outcome from scratch — for
+  // anyone who missed the live race, or just wants to watch it again.
+  function watchReplay() {
+    setRaceComplete(false);
+    setReplayStartAt(new Date().toISOString());
+  }
 
   // Chat stays visible in the same right-side column across the whole
   // lifecycle — waiting room, live race, and results — so it never
@@ -347,6 +359,7 @@ export function SeasonView({
             <>
               <div className="relative">
                 <RaceCanvas
+                  key={raceEpoch ?? "idle"}
                   teams={teams}
                   finalOrder={season.final_order as string[]}
                   seed={season.reveal_seed_uint32 as number}
@@ -356,17 +369,26 @@ export function SeasonView({
                 />
                 <FloatingEmojiOverlay bursts={floaters} onComplete={removeFloater} />
               </div>
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 {REACTION_EMOJIS.map((emoji) => (
                   <button
                     key={emoji}
                     type="button"
                     onClick={() => cheer(emoji)}
-                    className="rounded-full border border-turf-600 bg-turf-800 px-3 py-2 text-lg hover:border-endzone-500 hover:bg-turf-700"
+                    className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-turf-600 bg-turf-800 text-lg leading-none hover:border-endzone-500 hover:bg-turf-700"
                   >
-                    {emoji}
+                    <span>{emoji}</span>
                   </button>
                 ))}
+                {raceComplete && (
+                  <button
+                    type="button"
+                    onClick={watchReplay}
+                    className="ml-auto rounded-full border border-turf-600 bg-turf-800 px-4 py-2 text-sm font-medium text-chalk hover:border-endzone-500 hover:bg-turf-700"
+                  >
+                    🔁 Watch Replay
+                  </button>
+                )}
               </div>
               {raceComplete && myPickNumber && (
                 <div className="flex flex-col items-center gap-2 rounded-xl border border-gold-500/40 bg-gold-500/10 px-6 py-6 text-center">
