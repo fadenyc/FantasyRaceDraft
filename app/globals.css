@@ -67,10 +67,26 @@ a {
 
 body {
   background-color: var(--color-turf-950);
+  /* Ellipse sizes scale with the viewport (clamped between a floor and the
+     original fixed size as a ceiling) instead of a flat pixel size — a
+     fixed size looks oversized on a narrow phone and undersized on a wide
+     desktop, since it doesn't scale with how much space it's covering. */
   background-image:
-    radial-gradient(ellipse 900px 650px at 10% -15%, color-mix(in srgb, var(--color-field-500) 30%, transparent), transparent),
-    radial-gradient(ellipse 800px 550px at 110% 10%, color-mix(in srgb, var(--color-endzone-500) 22%, transparent), transparent),
-    radial-gradient(ellipse 700px 500px at 50% 120%, color-mix(in srgb, var(--color-field-500) 18%, transparent), transparent);
+    radial-gradient(
+      ellipse clamp(320px, 70vw, 900px) clamp(260px, 55vh, 650px) at 10% -15%,
+      color-mix(in srgb, var(--color-field-500) 30%, transparent),
+      transparent
+    ),
+    radial-gradient(
+      ellipse clamp(280px, 62vw, 800px) clamp(220px, 45vh, 550px) at 110% 10%,
+      color-mix(in srgb, var(--color-endzone-500) 22%, transparent),
+      transparent
+    ),
+    radial-gradient(
+      ellipse clamp(260px, 55vw, 700px) clamp(200px, 40vh, 500px) at 50% 120%,
+      color-mix(in srgb, var(--color-field-500) 18%, transparent),
+      transparent
+    );
   background-repeat: no-repeat;
   color: var(--color-chalk);
 }
