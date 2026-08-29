@@ -66,13 +66,23 @@ interface RunnerEngineState {
 
 // ---- Field layout geometry -------------------------------------------
 // Grid columns: team name | playable field (shared turf + lanes) | shared
-// end zone | rank. Sized with clamp() so every region scales fluidly
-// between mobile and desktop instead of jumping at a single breakpoint.
-const NAME_COL = "clamp(3.75rem, 15vw, 10rem)";
-const ENDZONE_COL = "clamp(1.5rem, 6vw, 3.25rem)";
-const RANK_COL = "clamp(2.25rem, 8vw, 3.5rem)";
+// end zone | rank. Widths are percentages of the grid container itself
+// (not the viewport), clamped so name/end-zone/rank stay readable at
+// their floor while giving the field column — minmax(0, 1fr) — everything
+// left over. Name+end-zone+rank together land around 36-38% of the
+// component's width, leaving the majority to the actual playable field.
+const NAME_COL = "clamp(3.5rem, 19%, 8rem)";
+const ENDZONE_COL = "clamp(2.25rem, 11%, 4rem)";
+const RANK_COL = "clamp(1.75rem, 8%, 2.5rem)";
 const GRID_TEMPLATE_COLUMNS = `${NAME_COL} minmax(0, 1fr) ${ENDZONE_COL} ${RANK_COL}`;
-const LANE_HEIGHT = "clamp(2rem, 6vw, 2.5rem)";
+// Lane height is sized to actually contain the runner (clamp(2.5rem,7vw,3.5rem)
+// below) plus a few px of breathing room, rather than deliberately
+// overflowing it — the runner no longer needs to bleed into neighboring
+// rows to read at full size.
+const LANE_HEIGHT = "clamp(2.875rem, 8vw, 4.25rem)";
+// A slim dedicated row for the yard-number strip, separate from the lanes
+// entirely, so numbers never sit on top of a runner.
+const NUMBER_STRIP_HEIGHT = "1.375rem";
 
 // Yard markers as [value, xPercent]. The 50 sits centered; values count
 // back down toward the end zone on either side, matching a real field.
@@ -90,29 +100,29 @@ const YARD_MARKERS: { value: number; x: number; mobile: boolean }[] = [
   { value: 10, x: 95, mobile: false },
 ];
 
-// Alternating vertical mowing stripes, a very faint grass-grain speckle,
-// and the major yard lines — all as layered CSS gradients on one shared
-// field element (no photograph, no per-lane repetition).
+// Alternating vertical mowing stripes and the major yard lines, layered as
+// CSS gradients on one shared field element (no photograph, no per-lane
+// repetition). The grass-grain speckle from the first pass competed
+// visually with the runners at small sizes, so it's gone — the mowing
+// stripes alone carry the texture.
 const FIELD_TEXTURE_STYLE: CSSProperties = {
   backgroundImage: [
-    // Major yard lines every 10% of the field width.
-    "repeating-linear-gradient(90deg, transparent, transparent calc(10% - 1px), color-mix(in srgb, var(--color-chalk) 22%, transparent) calc(10% - 1px), color-mix(in srgb, var(--color-chalk) 22%, transparent) 10%)",
+    // Major yard lines every 10% of the field width — slightly stronger
+    // than the first pass for clarity.
+    "repeating-linear-gradient(90deg, transparent, transparent calc(10% - 1px), color-mix(in srgb, var(--color-chalk) 28%, transparent) calc(10% - 1px), color-mix(in srgb, var(--color-chalk) 28%, transparent) 10%)",
     // Mowing stripes: alternating light/dark vertical bands.
     "repeating-linear-gradient(90deg, color-mix(in srgb, var(--color-field-500) 7%, transparent) 0, color-mix(in srgb, var(--color-field-500) 7%, transparent) 5%, transparent 5%, transparent 10%)",
-    // Very subtle grass-grain speckle.
-    "repeating-radial-gradient(circle at 3px 3px, color-mix(in srgb, var(--color-chalk) 5%, transparent) 0, transparent 2px, transparent 9px)",
   ].join(", "),
-  backgroundSize: "100% 100%, 100% 100%, 9px 9px",
-  backgroundRepeat: "no-repeat, no-repeat, repeat",
+  backgroundSize: "100% 100%, 100% 100%",
+  backgroundRepeat: "no-repeat, no-repeat",
 };
 
-// Finer hash-mark ticks between the major yard lines — hidden on mobile
-// (via className) to keep the field readable at small sizes.
+// Restrained minor hash-mark ticks between the major yard lines.
 const HASH_MARKS_STYLE: CSSProperties = {
   backgroundImage:
-    "repeating-linear-gradient(90deg, transparent, transparent calc(2% - 1px), color-mix(in srgb, var(--color-chalk) 12%, transparent) calc(2% - 1px), color-mix(in srgb, var(--color-chalk) 12%, transparent) 2%)",
-  backgroundSize: "100% 16%",
-  backgroundPosition: "0 0, 0 100%",
+    "repeating-linear-gradient(90deg, transparent, transparent calc(2% - 1px), color-mix(in srgb, var(--color-chalk) 10%, transparent) calc(2% - 1px), color-mix(in srgb, var(--color-chalk) 10%, transparent) 2%)",
+  backgroundSize: "100% 14%",
+  backgroundPosition: "0 0",
   backgroundRepeat: "no-repeat",
 };
 
@@ -166,7 +176,21 @@ export function RaceCanvas({
   function getEngine(teamId: string): RunnerEngineState {
     let state = engineRefs.current.get(teamId);
     if (!state) {
-      state = { spritePhase: 0, finished: false, finishedAtMs: null, lastSpriteFrame: CONTACT_FRAME };
+      // lastSpriteFrame starts at an impossible value (not a real 0-5
+      // frame) rather than CONTACT_FRAME, deliberately. If it started at
+      // CONTACT_FRAME and a race is already finished the moment this
+      // mounts (elapsed clamps straight to durationMs on tick one — a
+      // reload after the race, or a latecomer), every runner goes
+      // straight to the "finished" branch below without ever passing
+      // through the racing branch that would otherwise have called
+      // setSpriteFrame. For any runner whose deterministic finish pose
+      // happens to also be CONTACT_FRAME, `lastSpriteFrame !== finishPose`
+      // would be false and setSpriteFrame would never run at all — the
+      // sprite element's background-size/position would stay at the
+      // browser's default "auto", rendering a broken sliver of the sheet
+      // instead of the intended pose. A sentinel guarantees the very
+      // first frame comparison always triggers a real setSpriteFrame call.
+      state = { spritePhase: 0, finished: false, finishedAtMs: null, lastSpriteFrame: -1 };
       engineRefs.current.set(teamId, state);
     }
     return state;
@@ -350,45 +374,53 @@ export function RaceCanvas({
   }, [mode.mode, mode.mode === "live" ? mode.raceStartAt : null, seed, finalOrder, reducedMotion, durationMs]);
 
   const rowCount = teamsWithSheet.length;
+  // Row 1 is the dedicated yard-number strip; lanes start at row 2, so
+  // every shared background/overlay spans rowCount + 1 rows in total.
+  const totalRows = rowCount + 1;
 
   return (
     <div
       className="relative grid gap-x-1.5 overflow-hidden rounded-xl border border-turf-700 bg-turf-950 p-2 sm:gap-x-3 sm:p-4"
-      style={{ gridTemplateColumns: GRID_TEMPLATE_COLUMNS, gridAutoRows: LANE_HEIGHT, rowGap: "0.375rem" }}
+      style={{
+        gridTemplateColumns: GRID_TEMPLATE_COLUMNS,
+        gridTemplateRows: `${NUMBER_STRIP_HEIGHT} repeat(${rowCount}, ${LANE_HEIGHT})`,
+        rowGap: "0.25rem",
+      }}
     >
       {phase === "preroll" && !reducedMotion && mode.mode !== "idle" && <ReadySetGo />}
 
-      {/* Shared field turf — one continuous background behind every lane,
-          not repeated per row. Purely decorative. */}
+      {/* Shared field turf — one continuous background behind every lane
+          (and the number strip above them), not repeated per row. */}
       <div
         aria-hidden="true"
         className="pointer-events-none rounded-md bg-turf-700"
-        style={{ gridColumn: 2, gridRow: `1 / span ${rowCount}` }}
+        style={{ gridColumn: 2, gridRow: `1 / span ${totalRows}` }}
       />
       <div
         ref={trackRef}
         aria-hidden="true"
         className="pointer-events-none rounded-md"
-        style={{ gridColumn: 2, gridRow: `1 / span ${rowCount}`, ...FIELD_TEXTURE_STYLE }}
+        style={{ gridColumn: 2, gridRow: `1 / span ${totalRows}`, ...FIELD_TEXTURE_STYLE }}
       />
       <div
         aria-hidden="true"
-        className="pointer-events-none hidden rounded-md sm:block"
-        style={{ gridColumn: 2, gridRow: `1 / span ${rowCount}`, ...HASH_MARKS_STYLE }}
+        className="pointer-events-none rounded-md"
+        style={{ gridColumn: 2, gridRow: `1 / span ${totalRows}`, ...HASH_MARKS_STYLE }}
       />
 
-      {/* Yard numbers — block-style, translucent, desktop shows all nine,
-          mobile shows the reduced 20/40/50/40/20 set. */}
+      {/* Yard numbers live in their own slim strip above the lanes — never
+          overlapping a runner. Desktop shows all nine; mobile shows the
+          reduced 20/40/50/40/20 set, aligned with the yard lines below. */}
       {YARD_MARKERS.map((marker, i) => (
         <div
           key={i}
           aria-hidden="true"
-          className={`pointer-events-none flex items-center justify-center font-display text-[clamp(0.65rem,2.4vw,1.1rem)] text-chalk/25 ${
+          className={`pointer-events-none flex items-center justify-center font-display text-[clamp(0.6rem,2.1vw,0.9rem)] text-chalk/40 ${
             marker.mobile ? "" : "hidden sm:flex"
           }`}
           style={{
             gridColumn: 2,
-            gridRow: `1 / span ${rowCount}`,
+            gridRow: 1,
             justifySelf: "start",
             marginLeft: `${marker.x}%`,
             transform: "translateX(-50%)",
@@ -398,26 +430,33 @@ export function RaceCanvas({
         </div>
       ))}
 
-      {/* Shared end zone — one instance for the whole field, not per lane. */}
+      {/* Shared end zone — one instance for the whole field, not per lane.
+          Dark surface with restrained orange top/bottom accents rather
+          than a bright full-fill wash, and a bold chalk goal line. */}
       <div
-        className="relative flex items-center justify-center overflow-hidden rounded-r-md border-l-[3px] border-chalk bg-gradient-to-l from-endzone-700 via-endzone-600/90 to-endzone-600/60"
-        style={{ gridColumn: 3, gridRow: `1 / span ${rowCount}` }}
+        className="relative flex items-center justify-center overflow-hidden rounded-r-md border-l-4 border-chalk bg-turf-900"
+        style={{
+          gridColumn: 3,
+          gridRow: `1 / span ${totalRows}`,
+          backgroundImage:
+            "linear-gradient(180deg, color-mix(in srgb, var(--color-endzone-700) 38%, transparent) 0%, transparent 28%, transparent 72%, color-mix(in srgb, var(--color-endzone-700) 38%, transparent) 100%)",
+        }}
       >
         <span
           aria-hidden="true"
-          className="font-display text-[clamp(0.6rem,2.6vw,1rem)] font-bold tracking-[0.15em] text-chalk/90 [text-shadow:0_1px_2px_rgba(0,0,0,0.6)] [writing-mode:vertical-rl]"
+          className="font-display text-[clamp(0.75rem,3.2vw,1.15rem)] font-bold tracking-[0.25em] text-gold-500 [text-shadow:0_1px_2px_rgba(0,0,0,0.7)] [writing-mode:vertical-rl]"
         >
           TOUCHDOWN
         </span>
       </div>
 
       {teamsWithSheet.map((team, index) => {
-        const row = index + 1;
+        const row = index + 2;
 
         return (
           <div
             key={team.id}
-            className="flex min-w-0 items-center truncate rounded pl-1 text-[clamp(0.65rem,2.8vw,0.875rem)] font-medium text-chalk"
+            className="flex min-w-0 items-center truncate rounded pl-1 text-[clamp(0.65rem,2.6vw,0.875rem)] font-medium text-chalk"
             style={{ gridColumn: 1, gridRow: row }}
           >
             {team.name}
@@ -426,7 +465,7 @@ export function RaceCanvas({
       })}
 
       {teamsWithSheet.map((team, index) => {
-        const row = index + 1;
+        const row = index + 2;
         return (
           <div
             key={team.id}
@@ -461,7 +500,7 @@ export function RaceCanvas({
                 // each frame across the run cycle) — right-full would sit
                 // flush with the wrapper's raw edge, leaving a visible
                 // gap between the streak and the visible character.
-                className="pointer-events-none absolute right-[72%] top-1/2 h-1.5 w-5 -translate-y-1/2 rounded-full bg-gradient-to-l from-chalk/70 to-transparent opacity-0 sm:w-7"
+                className="pointer-events-none absolute right-[72%] top-1/2 h-1.5 w-4 -translate-y-1/2 rounded-full bg-gradient-to-l from-chalk/70 to-transparent opacity-0 sm:w-6"
               />
               <div
                 ref={(el) => {
@@ -480,12 +519,12 @@ export function RaceCanvas({
       {teamsWithSheet.map((team, index) => {
         const displayRank = lockedRanks[team.id] ?? (liveStandings.indexOf(team.id) + 1 || null);
         const isLocked = Boolean(lockedRanks[team.id]);
-        const row = index + 1;
+        const row = index + 2;
         return (
           <div
             key={team.id}
-            className={`rank-label flex items-center justify-end text-[clamp(0.65rem,2.6vw,0.875rem)] font-bold tabular-nums ${
-              isLocked ? "text-gold-500" : "text-chalk-faint"
+            className={`rank-label flex items-center justify-end text-[clamp(0.6rem,2.2vw,0.8rem)] font-bold tabular-nums ${
+              isLocked ? "text-gold-500" : "text-chalk-muted"
             }`}
             style={{ gridColumn: 4, gridRow: row }}
           >
