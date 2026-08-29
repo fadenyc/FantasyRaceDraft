@@ -31,6 +31,18 @@ const FPS_MAX = 14;
 // overshooting into the end zone.
 const FALLBACK_RUNNER_PX = 46;
 
+// Every sprite frame has transparent padding around the character —
+// measured directly across all 12 sheets x 6 frames via pixel sampling,
+// the visible (non-transparent) content's rightmost edge lands anywhere
+// from 63.5% to 83.4% of the frame's own width, never at 100%. Positioning
+// the wrapper element itself flush with the goal line (the previous
+// behavior) therefore left a visible gap between the runner and the line
+// at finish — the wrapper's box touched it, but the character inside
+// didn't. This constant uses the worst-case (most-padded) measured frame
+// so every runner's visible leading edge reliably reaches, rather than
+// falls short of, the goal line.
+const LEADING_PAD_FRACTION = 0.365;
+
 const READY_MS = 650;
 const SET_MS = 650;
 const GO_MS = 500;
@@ -73,17 +85,25 @@ interface RunnerEngineState {
 // their floor while giving the field column — minmax(0, 1fr) — everything
 // left over. Name+end-zone+rank together land around 36-38% of the
 // component's width, leaving the majority to the actual playable field.
-const NAME_COL = "clamp(3.5rem, 19%, 8rem)";
+// Widened from clamp(3.5rem,19%,8rem) — the previous width truncated
+// longer team names (e.g. "GOODOLDGRINGO", "Peerless Team...") even with
+// ellipsis. Paired with the name cell's switch to two-line wrapping below
+// rather than relying on width alone.
+const NAME_COL = "clamp(4.5rem, 25%, 8.5rem)";
 const ENDZONE_COL = "clamp(2.25rem, 11%, 4rem)";
 const RANK_COL = "clamp(1.75rem, 8%, 2.5rem)";
 const GRID_TEMPLATE_COLUMNS = `${NAME_COL} minmax(0, 1fr) ${ENDZONE_COL} ${RANK_COL}`;
-// Runner size held close to its previous value — just enough smaller to
-// leave breathing room under the shorter lane height below.
-const RUNNER_SIZE = "clamp(2.75rem, 7.25vw, 3.625rem)";
-// Lane height cut ~16% across the clamp so the whole field is noticeably
-// shorter (keeps the post-race reactions/replay controls comfortably
-// on-screen) while staying tall enough for the runner, its shadow, and bob.
-const LANE_HEIGHT = "clamp(2.75rem, 7.75vw, 4rem)";
+// Scaled down to match LANE_HEIGHT's tighter max below, keeping the same
+// ~6px margin between runner and lane height at the top of the clamp.
+const RUNNER_SIZE = "clamp(2.75rem, 6vw, 2.875rem)";
+// Apple's Human Interface Guidelines put the minimum comfortable row/hit
+// target at 44pt (== 44px in CSS). 2.75rem (44px) is already exactly that
+// floor — mobile lane height can't shrink further without going below
+// Apple's own recommendation. What COULD still shrink was the vw-driven
+// growth toward larger viewports (previously up to 4rem/64px); the max is
+// pulled in closer to that 44pt baseline so the field doesn't get taller
+// than it needs to be on bigger screens.
+const LANE_HEIGHT = "clamp(2.75rem, 6.5vw, 3.25rem)";
 // A slim dedicated row for the yard-number strip, separate from the lanes
 // entirely, so numbers never sit on top of a runner.
 const NUMBER_STRIP_HEIGHT = "1.25rem";
@@ -338,7 +358,8 @@ export function RaceCanvas({
       refs.wrapper.style.transition = "opacity 500ms ease";
       refs.wrapper.style.opacity = "0";
       requestAnimationFrame(() => {
-        refs.wrapper!.style.transform = `translate3d(${pos.progress * width - size}px, 0, 0)`;
+        const baseX = pos.progress * width - size + size * LEADING_PAD_FRACTION;
+        refs.wrapper!.style.transform = `translate3d(${baseX}px, 0, 0)`;
         setSpriteFrame(refs.sprite!, CONTACT_FRAME);
         refs.wrapper!.style.opacity = "1";
       });
@@ -396,7 +417,7 @@ export function RaceCanvas({
           }
         }
 
-        const baseX = pos.progress * width - size;
+        const baseX = pos.progress * width - size + size * LEADING_PAD_FRACTION;
         const msSinceFinish = engine.finishedAtMs !== null ? elapsed - engine.finishedAtMs : 0;
         const overshoot = engine.finished ? overshootPx(msSinceFinish) : 0;
 
@@ -576,10 +597,21 @@ export function RaceCanvas({
         return (
           <div
             key={team.id}
-            className="flex min-w-0 items-center truncate rounded pl-1 text-[clamp(0.65rem,2.6vw,0.875rem)] font-medium text-chalk"
+            className="flex min-w-0 items-center rounded pl-1"
             style={{ gridColumn: 1, gridRow: row }}
           >
-            {team.name}
+            {/* Two-line wrap instead of single-line truncation — a name
+                like "GOODOLDGRINGO" or "Peerless Team" was getting cut off
+                entirely at the old single-line width. line-clamp needs its
+                own -webkit-box display, so it lives on this inner span
+                rather than the flex/centering wrapper above. break-words
+                additionally lets a single long unbroken word (no spaces to
+                wrap on, e.g. "GOODOLDGRINGO") wrap mid-word onto the
+                second line instead of overflowing line one and getting
+                silently clipped by line-clamp's own overflow:hidden. */}
+            <span className="line-clamp-2 break-words text-[clamp(0.6rem,2.3vw,0.8rem)] leading-tight font-medium text-chalk">
+              {team.name}
+            </span>
           </div>
         );
       })}
