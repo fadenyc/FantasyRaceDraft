@@ -64,17 +64,57 @@ interface RunnerEngineState {
   lastSpriteFrame: number;
 }
 
-// Repeating yard-line stripes, stopping before the end zone.
-const YARD_LINES_STYLE: CSSProperties = {
-  backgroundImage:
-    "repeating-linear-gradient(90deg, transparent, transparent calc(10% - 1px), color-mix(in srgb, var(--color-chalk) 18%, transparent) calc(10% - 1px), color-mix(in srgb, var(--color-chalk) 18%, transparent) 10%)",
-  backgroundSize: "90% 100%",
-  backgroundRepeat: "no-repeat",
+// ---- Field layout geometry -------------------------------------------
+// Grid columns: team name | playable field (shared turf + lanes) | shared
+// end zone | rank. Sized with clamp() so every region scales fluidly
+// between mobile and desktop instead of jumping at a single breakpoint.
+const NAME_COL = "clamp(3.75rem, 15vw, 10rem)";
+const ENDZONE_COL = "clamp(1.5rem, 6vw, 3.25rem)";
+const RANK_COL = "clamp(2.25rem, 8vw, 3.5rem)";
+const GRID_TEMPLATE_COLUMNS = `${NAME_COL} minmax(0, 1fr) ${ENDZONE_COL} ${RANK_COL}`;
+const LANE_HEIGHT = "clamp(2rem, 6vw, 2.5rem)";
+
+// Yard markers as [value, xPercent]. The 50 sits centered; values count
+// back down toward the end zone on either side, matching a real field.
+// `mobile: false` entries are hidden below sm — the reduced set is
+// `20 40 50 40 20`.
+const YARD_MARKERS: { value: number; x: number; mobile: boolean }[] = [
+  { value: 10, x: 5, mobile: false },
+  { value: 20, x: 15, mobile: true },
+  { value: 30, x: 25, mobile: false },
+  { value: 40, x: 35, mobile: true },
+  { value: 50, x: 50, mobile: true },
+  { value: 40, x: 65, mobile: true },
+  { value: 30, x: 75, mobile: false },
+  { value: 20, x: 85, mobile: true },
+  { value: 10, x: 95, mobile: false },
+];
+
+// Alternating vertical mowing stripes, a very faint grass-grain speckle,
+// and the major yard lines — all as layered CSS gradients on one shared
+// field element (no photograph, no per-lane repetition).
+const FIELD_TEXTURE_STYLE: CSSProperties = {
+  backgroundImage: [
+    // Major yard lines every 10% of the field width.
+    "repeating-linear-gradient(90deg, transparent, transparent calc(10% - 1px), color-mix(in srgb, var(--color-chalk) 22%, transparent) calc(10% - 1px), color-mix(in srgb, var(--color-chalk) 22%, transparent) 10%)",
+    // Mowing stripes: alternating light/dark vertical bands.
+    "repeating-linear-gradient(90deg, color-mix(in srgb, var(--color-field-500) 7%, transparent) 0, color-mix(in srgb, var(--color-field-500) 7%, transparent) 5%, transparent 5%, transparent 10%)",
+    // Very subtle grass-grain speckle.
+    "repeating-radial-gradient(circle at 3px 3px, color-mix(in srgb, var(--color-chalk) 5%, transparent) 0, transparent 2px, transparent 9px)",
+  ].join(", "),
+  backgroundSize: "100% 100%, 100% 100%, 9px 9px",
+  backgroundRepeat: "no-repeat, no-repeat, repeat",
 };
 
-// Alternating mowed-grass shade per lane — the classic striped-turf look,
-// reusing the app's existing turf tones so it stays on-palette.
-const LANE_TURF_CLASS = ["bg-turf-700", "bg-turf-800"];
+// Finer hash-mark ticks between the major yard lines — hidden on mobile
+// (via className) to keep the field readable at small sizes.
+const HASH_MARKS_STYLE: CSSProperties = {
+  backgroundImage:
+    "repeating-linear-gradient(90deg, transparent, transparent calc(2% - 1px), color-mix(in srgb, var(--color-chalk) 12%, transparent) calc(2% - 1px), color-mix(in srgb, var(--color-chalk) 12%, transparent) 2%)",
+  backgroundSize: "100% 16%",
+  backgroundPosition: "0 0, 0 100%",
+  backgroundRepeat: "no-repeat",
+};
 
 export interface RaceCanvasProps {
   teams: RaceCanvasTeam[];
@@ -132,10 +172,10 @@ export function RaceCanvas({
     return state;
   }
 
-  // Track how wide the racetrack actually is (px) so position can be
-  // expressed as a transform rather than a percentage-based `left` — and
-  // stays correct across resizes without any extra logic, since every
-  // frame just re-reads the current width.
+  // Tracks the width of the shared field column itself (not the name
+  // column or the shared end zone) — every runner's horizontal position is
+  // a fraction of exactly this width, so progress=1 always lands right at
+  // the goal line regardless of how wide the name/rank columns are.
   useEffect(() => {
     const el = trackRef.current;
     if (!el) return;
@@ -309,77 +349,147 @@ export function RaceCanvas({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode.mode, mode.mode === "live" ? mode.raceStartAt : null, seed, finalOrder, reducedMotion, durationMs]);
 
-  return (
-    <div className="flex flex-col gap-1.5 rounded-xl border border-turf-700 bg-gradient-to-b from-turf-900 via-turf-800/80 to-turf-900 p-2 sm:gap-2 sm:p-4">
-      {phase === "preroll" && !reducedMotion && mode.mode !== "idle" && <ReadySetGo />}
-      {teamsWithSheet.map((team, index) => {
-        const displayRank = lockedRanks[team.id] ?? (liveStandings.indexOf(team.id) + 1 || null);
-        const isLocked = Boolean(lockedRanks[team.id]);
+  const rowCount = teamsWithSheet.length;
 
+  return (
+    <div
+      className="relative grid gap-x-1.5 overflow-hidden rounded-xl border border-turf-700 bg-turf-950 p-2 sm:gap-x-3 sm:p-4"
+      style={{ gridTemplateColumns: GRID_TEMPLATE_COLUMNS, gridAutoRows: LANE_HEIGHT, rowGap: "0.375rem" }}
+    >
+      {phase === "preroll" && !reducedMotion && mode.mode !== "idle" && <ReadySetGo />}
+
+      {/* Shared field turf — one continuous background behind every lane,
+          not repeated per row. Purely decorative. */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none rounded-md bg-turf-700"
+        style={{ gridColumn: 2, gridRow: `1 / span ${rowCount}` }}
+      />
+      <div
+        ref={trackRef}
+        aria-hidden="true"
+        className="pointer-events-none rounded-md"
+        style={{ gridColumn: 2, gridRow: `1 / span ${rowCount}`, ...FIELD_TEXTURE_STYLE }}
+      />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none hidden rounded-md sm:block"
+        style={{ gridColumn: 2, gridRow: `1 / span ${rowCount}`, ...HASH_MARKS_STYLE }}
+      />
+
+      {/* Yard numbers — block-style, translucent, desktop shows all nine,
+          mobile shows the reduced 20/40/50/40/20 set. */}
+      {YARD_MARKERS.map((marker, i) => (
+        <div
+          key={i}
+          aria-hidden="true"
+          className={`pointer-events-none flex items-center justify-center font-display text-[clamp(0.65rem,2.4vw,1.1rem)] text-chalk/25 ${
+            marker.mobile ? "" : "hidden sm:flex"
+          }`}
+          style={{
+            gridColumn: 2,
+            gridRow: `1 / span ${rowCount}`,
+            justifySelf: "start",
+            marginLeft: `${marker.x}%`,
+            transform: "translateX(-50%)",
+          }}
+        >
+          {marker.value}
+        </div>
+      ))}
+
+      {/* Shared end zone — one instance for the whole field, not per lane. */}
+      <div
+        className="relative flex items-center justify-center overflow-hidden rounded-r-md border-l-[3px] border-chalk bg-gradient-to-l from-endzone-700 via-endzone-600/90 to-endzone-600/60"
+        style={{ gridColumn: 3, gridRow: `1 / span ${rowCount}` }}
+      >
+        <span
+          aria-hidden="true"
+          className="font-display text-[clamp(0.6rem,2.6vw,1rem)] font-bold tracking-[0.15em] text-chalk/90 [text-shadow:0_1px_2px_rgba(0,0,0,0.6)] [writing-mode:vertical-rl]"
+        >
+          TOUCHDOWN
+        </span>
+      </div>
+
+      {teamsWithSheet.map((team, index) => {
+        const row = index + 1;
+
+        return (
+          <div
+            key={team.id}
+            className="flex min-w-0 items-center truncate rounded pl-1 text-[clamp(0.65rem,2.8vw,0.875rem)] font-medium text-chalk"
+            style={{ gridColumn: 1, gridRow: row }}
+          >
+            {team.name}
+          </div>
+        );
+      })}
+
+      {teamsWithSheet.map((team, index) => {
+        const row = index + 1;
         return (
           <div
             key={team.id}
             ref={(el) => {
               getRefs(team.id).row = el;
             }}
-            className="lane-row flex items-center gap-1.5 rounded sm:gap-3"
+            className={`lane-row relative min-w-0 overflow-visible ${
+              index < rowCount - 1 ? "border-b border-chalk/10" : ""
+            }`}
+            style={{ gridColumn: 2, gridRow: row }}
           >
-            <div className="w-16 shrink-0 truncate text-xs font-medium text-chalk sm:w-40 sm:text-sm">
-              {team.name}
-            </div>
             <div
-              ref={index === 0 ? trackRef : undefined}
-              className={`relative h-8 min-w-0 flex-1 overflow-visible rounded-md sm:h-9 ${LANE_TURF_CLASS[index % 2]}`}
-              style={YARD_LINES_STYLE}
+              ref={(el) => {
+                getRefs(team.id).wrapper = el;
+              }}
+              className="runner-wrapper absolute top-1/2 z-10 h-[clamp(2.5rem,7vw,3.5rem)] w-[clamp(2.5rem,7vw,3.5rem)] -translate-y-1/2 will-change-transform"
+              style={{ transform: "translate3d(-40px, 0, 0)" }}
             >
-              <div className="absolute inset-y-0 right-0 flex w-[12%] items-center justify-center overflow-hidden rounded-r-md border-l-2 border-chalk/80 bg-gradient-to-l from-endzone-700 via-endzone-600 to-endzone-600/70">
-                <span className="font-display text-[9px] font-bold tracking-wide text-chalk/90 [text-shadow:0_1px_1px_rgba(0,0,0,0.6)] sm:text-xs">
-                  TD
-                </span>
-              </div>
               <div
                 ref={(el) => {
-                  getRefs(team.id).wrapper = el;
+                  getRefs(team.id).shadow = el;
                 }}
-                className="runner-wrapper absolute top-1/2 h-10 w-10 -translate-y-1/2 will-change-transform sm:h-14 sm:w-14"
-                style={{ transform: "translate3d(-40px, 0, 0)" }}
-              >
-                <div
-                  ref={(el) => {
-                    getRefs(team.id).shadow = el;
-                  }}
-                  className="absolute bottom-0 left-1/2 h-2 w-3/4 -translate-x-1/2 rounded-full bg-black/50 blur-[1px]"
-                />
-                <div
-                  ref={(el) => {
-                    getRefs(team.id).streak = el;
-                  }}
-                  // The sprite frame has ~25-30% transparent padding before
-                  // the character's trailing edge (measured directly from
-                  // the sheet: left-edge pixels start around x=0.21-0.36 of
-                  // each frame across the run cycle) — right-full would sit
-                  // flush with the wrapper's raw edge, leaving a visible
-                  // gap between the streak and the visible character.
-                  className="pointer-events-none absolute right-[72%] top-1/2 h-1.5 w-5 -translate-y-1/2 rounded-full bg-gradient-to-l from-chalk/70 to-transparent opacity-0 sm:w-7"
-                />
-                <div
-                  ref={(el) => {
-                    getRefs(team.id).sprite = el;
-                  }}
-                  role="img"
-                  aria-label={`${team.name} runner`}
-                  className="relative h-full w-full bg-no-repeat drop-shadow-[0_2px_3px_rgba(0,0,0,0.5)]"
-                  style={{ backgroundImage: `url(${team.sheet})` }}
-                />
-              </div>
+                className="absolute bottom-0 left-1/2 h-2 w-3/4 -translate-x-1/2 rounded-full bg-black/50 blur-[1px]"
+              />
+              <div
+                ref={(el) => {
+                  getRefs(team.id).streak = el;
+                }}
+                // The sprite frame has ~25-30% transparent padding before
+                // the character's trailing edge (measured directly from
+                // the sheet: left-edge pixels start around x=0.21-0.36 of
+                // each frame across the run cycle) — right-full would sit
+                // flush with the wrapper's raw edge, leaving a visible
+                // gap between the streak and the visible character.
+                className="pointer-events-none absolute right-[72%] top-1/2 h-1.5 w-5 -translate-y-1/2 rounded-full bg-gradient-to-l from-chalk/70 to-transparent opacity-0 sm:w-7"
+              />
+              <div
+                ref={(el) => {
+                  getRefs(team.id).sprite = el;
+                }}
+                role="img"
+                aria-label={`${team.name} runner`}
+                className="relative h-full w-full bg-no-repeat drop-shadow-[0_2px_3px_rgba(0,0,0,0.5)]"
+                style={{ backgroundImage: `url(${team.sheet})` }}
+              />
             </div>
-            <div
-              className={`rank-label w-10 shrink-0 text-right text-xs font-bold tabular-nums sm:w-14 sm:text-sm ${
-                isLocked ? "text-gold-500" : "text-chalk-faint"
-              }`}
-            >
-              {displayRank ? ordinal(displayRank) : ""}
-            </div>
+          </div>
+        );
+      })}
+
+      {teamsWithSheet.map((team, index) => {
+        const displayRank = lockedRanks[team.id] ?? (liveStandings.indexOf(team.id) + 1 || null);
+        const isLocked = Boolean(lockedRanks[team.id]);
+        const row = index + 1;
+        return (
+          <div
+            key={team.id}
+            className={`rank-label flex items-center justify-end text-[clamp(0.65rem,2.6vw,0.875rem)] font-bold tabular-nums ${
+              isLocked ? "text-gold-500" : "text-chalk-faint"
+            }`}
+            style={{ gridColumn: 4, gridRow: row }}
+          >
+            {displayRank ? ordinal(displayRank) : ""}
           </div>
         );
       })}
@@ -402,7 +512,7 @@ function hashPhase(teamId: string): number {
 
 function ReadySetGo() {
   return (
-    <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
+    <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center">
       <div className="ready-set-go rounded-full bg-turf-950/80 px-6 py-2 font-display text-2xl tracking-widest text-gold-500">
         <span className="ready-text">READY</span>
         <span className="set-text">SET</span>
