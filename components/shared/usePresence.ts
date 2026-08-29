@@ -14,6 +14,14 @@ export function usePresence(channelName: string, identityKey: string | null, lab
   const [entries, setEntries] = useState<PresenceEntry[]>([]);
   const channelRef = useRef<RealtimeChannel | null>(null);
   const joinedRef = useRef(false);
+  // Mirrors the latest `label` prop outside the mount-time effect closure,
+  // so the SUBSCRIBED and visibility handlers below (which don't re-run
+  // when label changes) always re-track the current label instead of a
+  // stale one captured at mount.
+  const labelRef = useRef(label);
+  useEffect(() => {
+    labelRef.current = label;
+  }, [label]);
 
   useEffect(() => {
     if (!identityKey) return;
@@ -30,18 +38,31 @@ export function usePresence(channelName: string, identityKey: string | null, lab
     channel.subscribe((status) => {
       if (status === "SUBSCRIBED") {
         joinedRef.current = true;
-        // Uses the label captured when this effect instance was created (i.e. at mount);
-        // later label changes are re-broadcast by the effect below without rejoining the channel.
-        channel.track({ label });
+        channel.track({ label: labelRef.current });
       }
     });
 
+    // Mobile browsers (iOS Safari in particular) throttle or fully suspend
+    // a backgrounded tab's JS timers and websockets — someone who locks
+    // their phone or switches apps for a bit can come back to a presence
+    // list that's stale until something wakes the connection back up.
+    // Re-tracking on visibility regain both nudges our own entry current
+    // and, since it's a live round-trip on the channel, forces a fresh
+    // sync from the server — cheap enough to just always do rather than
+    // try to detect whether the socket actually dropped.
+    function handleVisibilityChange() {
+      if (document.visibilityState === "visible" && joinedRef.current) {
+        channel.track({ label: labelRef.current });
+      }
+    }
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
     return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
       channelRef.current = null;
       joinedRef.current = false;
       supabase.removeChannel(channel);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [channelName, identityKey]);
 
   // Re-broadcast the label (e.g. after claiming a team) without tearing down the channel.
