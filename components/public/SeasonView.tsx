@@ -341,9 +341,9 @@ export function SeasonView({
           }}
           aria-label={soundEnabled ? "Turn sound off" : "Turn sound on"}
           title={soundEnabled ? "Sound on" : "Sound off"}
-          className="shrink-0 rounded-full border border-turf-600 bg-turf-800 px-3 py-2 text-lg hover:border-endzone-500 hover:bg-turf-700"
+          className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-full border border-turf-600 bg-turf-800 text-base leading-none hover:border-endzone-500 hover:bg-turf-700"
         >
-          {soundEnabled ? "🔊" : "🔇"}
+          <span>{soundEnabled ? "🔊" : "🔇"}</span>
         </button>
       </div>
 
@@ -375,7 +375,7 @@ export function SeasonView({
                     key={emoji}
                     type="button"
                     onClick={() => cheer(emoji)}
-                    className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-turf-600 bg-turf-800 text-lg leading-none hover:border-endzone-500 hover:bg-turf-700"
+                    className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-full border border-turf-600 bg-turf-800 text-base leading-none hover:border-endzone-500 hover:bg-turf-700"
                   >
                     <span>{emoji}</span>
                   </button>
