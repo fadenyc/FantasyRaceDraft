@@ -25,9 +25,11 @@ const RECOVERY_FRAME = 5;
 const FPS_MIN = 10;
 const FPS_MAX = 14;
 
-const MOBILE_RUNNER_PX = 40;
-const DESKTOP_RUNNER_PX = 56;
-const DESKTOP_BREAKPOINT = "(min-width: 640px)";
+// Fallback only — the real runner size is measured from the rendered
+// element (see the ResizeObserver below). It's used to offset the runner
+// so progress=1 lands its leading edge on the goal line rather than
+// overshooting into the end zone.
+const FALLBACK_RUNNER_PX = 46;
 
 const READY_MS = 650;
 const SET_MS = 650;
@@ -75,11 +77,11 @@ const NAME_COL = "clamp(3.5rem, 19%, 8rem)";
 const ENDZONE_COL = "clamp(2.25rem, 11%, 4rem)";
 const RANK_COL = "clamp(1.75rem, 8%, 2.5rem)";
 const GRID_TEMPLATE_COLUMNS = `${NAME_COL} minmax(0, 1fr) ${ENDZONE_COL} ${RANK_COL}`;
-// Lane height is sized to actually contain the runner (clamp(2.5rem,7vw,3.5rem)
-// below) plus a few px of breathing room, rather than deliberately
-// overflowing it — the runner no longer needs to bleed into neighboring
-// rows to read at full size.
-const LANE_HEIGHT = "clamp(2.875rem, 8vw, 4.25rem)";
+// Runner size, bumped ~15% from the previous clamp(2.5rem,7vw,3.5rem) so
+// the sprites read larger against the open field. Lane height tracks it
+// with a bit of breathing room so nothing feels cramped.
+const RUNNER_SIZE = "clamp(2.875rem, 8vw, 4rem)";
+const LANE_HEIGHT = "clamp(3.25rem, 9.25vw, 4.75rem)";
 // A slim dedicated row for the yard-number strip, separate from the lanes
 // entirely, so numbers never sit on top of a runner.
 const NUMBER_STRIP_HEIGHT = "1.375rem";
@@ -100,30 +102,72 @@ const YARD_MARKERS: { value: number; x: number; mobile: boolean }[] = [
   { value: 10, x: 95, mobile: false },
 ];
 
-// Alternating vertical mowing stripes and the major yard lines, layered as
-// CSS gradients on one shared field element (no photograph, no per-lane
-// repetition). The grass-grain speckle from the first pass competed
-// visually with the runners at small sizes, so it's gone — the mowing
-// stripes alone carry the texture.
-const FIELD_TEXTURE_STYLE: CSSProperties = {
+// The turf is built from three stacked layers, deliberately kept on
+// separate elements rather than merged into one background-image list:
+//
+//   1. TURF_BASE_STYLE  — mowing stripes + depth shading. Static.
+//   2. `.turf-grain`    — fine grass grain. SLOWLY DRIFTS (globals.css).
+//   3. FIELD_LINES_STYLE — yard lines + hash marks. Static.
+//
+// The split exists because only the grain may move. Merging the grain
+// into the same element as the yard lines would drag the lines along with
+// it, turning the field into a conveyor belt — exactly the effect to
+// avoid. Keeping lines on their own static element makes that impossible
+// by construction.
+
+// Mowing stripes plus a soft top-down depth gradient, over the base green.
+const TURF_BASE_STYLE: CSSProperties = {
   backgroundImage: [
-    // Major yard lines every 10% of the field width — slightly stronger
-    // than the first pass for clarity.
-    "repeating-linear-gradient(90deg, transparent, transparent calc(10% - 1px), color-mix(in srgb, var(--color-chalk) 28%, transparent) calc(10% - 1px), color-mix(in srgb, var(--color-chalk) 28%, transparent) 10%)",
-    // Mowing stripes: alternating light/dark vertical bands.
-    "repeating-linear-gradient(90deg, color-mix(in srgb, var(--color-field-500) 7%, transparent) 0, color-mix(in srgb, var(--color-field-500) 7%, transparent) 5%, transparent 5%, transparent 10%)",
+    // Vertical depth: very slightly brighter through the middle of the
+    // field, darker at the top and bottom edges.
+    "linear-gradient(180deg, rgba(0,0,0,0.22) 0%, transparent 18%, transparent 82%, rgba(0,0,0,0.26) 100%)",
+    // Mowing stripes: alternating mown/unmown vertical bands, a touch
+    // stronger than before so the turf reads thicker.
+    "repeating-linear-gradient(90deg, color-mix(in srgb, var(--color-field-500) 10%, transparent) 0, color-mix(in srgb, var(--color-field-500) 10%, transparent) 5%, transparent 5%, transparent 10%)",
   ].join(", "),
   backgroundSize: "100% 100%, 100% 100%",
   backgroundRepeat: "no-repeat, no-repeat",
 };
 
-// Restrained minor hash-mark ticks between the major yard lines.
-const HASH_MARKS_STYLE: CSSProperties = {
-  backgroundImage:
-    "repeating-linear-gradient(90deg, transparent, transparent calc(2% - 1px), color-mix(in srgb, var(--color-chalk) 10%, transparent) calc(2% - 1px), color-mix(in srgb, var(--color-chalk) 10%, transparent) 2%)",
-  backgroundSize: "100% 14%",
-  backgroundPosition: "0 0",
-  backgroundRepeat: "no-repeat",
+// Fine grass grain — two opposing hairline gradients that read as blades
+// rather than dots. Tile is 8px, and the drift keyframe moves an exact
+// multiple of it so the loop is seamless.
+const TURF_GRAIN_STYLE: CSSProperties = {
+  backgroundImage: [
+    "repeating-linear-gradient(72deg, color-mix(in srgb, var(--color-chalk) 4%, transparent) 0 1px, transparent 1px 4px)",
+    "repeating-linear-gradient(-64deg, rgba(0,0,0,0.16) 0 1px, transparent 1px 5px)",
+  ].join(", "),
+  backgroundSize: "8px 8px, 8px 8px",
+  backgroundRepeat: "repeat, repeat",
+};
+
+// Major yard lines every 10% plus shorter hash-mark ticks near the top and
+// bottom edges. Static — never animated.
+const FIELD_LINES_STYLE: CSSProperties = {
+  backgroundImage: [
+    // Major yard lines.
+    "repeating-linear-gradient(90deg, transparent, transparent calc(10% - 1px), color-mix(in srgb, var(--color-chalk) 30%, transparent) calc(10% - 1px), color-mix(in srgb, var(--color-chalk) 30%, transparent) 10%)",
+    // Hash marks, top band.
+    "repeating-linear-gradient(90deg, transparent, transparent calc(2% - 1px), color-mix(in srgb, var(--color-chalk) 12%, transparent) calc(2% - 1px), color-mix(in srgb, var(--color-chalk) 12%, transparent) 2%)",
+    // Hash marks, bottom band.
+    "repeating-linear-gradient(90deg, transparent, transparent calc(2% - 1px), color-mix(in srgb, var(--color-chalk) 12%, transparent) calc(2% - 1px), color-mix(in srgb, var(--color-chalk) 12%, transparent) 2%)",
+  ].join(", "),
+  backgroundSize: "100% 100%, 100% 11%, 100% 11%",
+  backgroundPosition: "0 0, 0 0, 0 100%",
+  backgroundRepeat: "no-repeat, no-repeat, no-repeat",
+};
+
+// The end zone gets the same grain and mowing treatment at lower contrast
+// so it reads as a darker patch of the same field, not a UI sidebar.
+const ENDZONE_TURF_STYLE: CSSProperties = {
+  backgroundImage: [
+    // Restrained orange accents at the very top and bottom edges only.
+    "linear-gradient(180deg, color-mix(in srgb, var(--color-endzone-700) 40%, transparent) 0%, transparent 26%, transparent 74%, color-mix(in srgb, var(--color-endzone-700) 40%, transparent) 100%)",
+    "repeating-linear-gradient(72deg, color-mix(in srgb, var(--color-chalk) 3%, transparent) 0 1px, transparent 1px 4px)",
+    "repeating-linear-gradient(90deg, color-mix(in srgb, var(--color-field-500) 6%, transparent) 0, color-mix(in srgb, var(--color-field-500) 6%, transparent) 22%, transparent 22%, transparent 44%)",
+  ].join(", "),
+  backgroundSize: "100% 100%, 8px 8px, 100% 100%",
+  backgroundRepeat: "no-repeat, repeat, no-repeat",
 };
 
 export interface RaceCanvasProps {
@@ -148,7 +192,8 @@ export function RaceCanvas({
   const trackWidthRef = useRef(0);
   const domRefs = useRef<Map<string, RunnerDomRefs>>(new Map());
   const engineRefs = useRef<Map<string, RunnerEngineState>>(new Map());
-  const runnerSizeRef = useRef(MOBILE_RUNNER_PX);
+  const runnerSizeRef = useRef(FALLBACK_RUNNER_PX);
+  const runnerMeasureRef = useRef<HTMLDivElement | null>(null);
 
   const [liveStandings, setLiveStandings] = useState<string[]>(finalOrder);
   const [lockedRanks, setLockedRanks] = useState<Record<string, number>>({});
@@ -211,14 +256,21 @@ export function RaceCanvas({
     return () => observer.disconnect();
   }, []);
 
+  // Measures the runner's actual rendered size rather than deriving it
+  // from a media query. RUNNER_SIZE is a fluid clamp(), so a two-tier
+  // breakpoint guess would disagree with the real laid-out size at most
+  // viewport widths. This feeds the finish-line offset below, so being
+  // off by several px would let runners overshoot past the goal line.
   useEffect(() => {
-    const query = window.matchMedia(DESKTOP_BREAKPOINT);
-    const apply = () => {
-      runnerSizeRef.current = query.matches ? DESKTOP_RUNNER_PX : MOBILE_RUNNER_PX;
+    const el = runnerMeasureRef.current;
+    if (!el) return;
+    const apply = (width: number) => {
+      if (width > 0) runnerSizeRef.current = Math.round(width);
     };
-    apply();
-    query.addEventListener("change", apply);
-    return () => query.removeEventListener("change", apply);
+    const observer = new ResizeObserver((entries) => apply(entries[0]?.contentRect.width ?? 0));
+    observer.observe(el);
+    apply(el.getBoundingClientRect().width);
+    return () => observer.disconnect();
   }, []);
 
   // Reduced motion: skip continuous racing entirely — jump straight to the
@@ -245,7 +297,7 @@ export function RaceCanvas({
       refs.wrapper.style.opacity = "0";
       requestAnimationFrame(() => {
         refs.wrapper!.style.transform = `translate3d(${pos.progress * width - size}px, 0, 0)`;
-        setSpriteFrame(refs.sprite!, CONTACT_FRAME, size);
+        setSpriteFrame(refs.sprite!, CONTACT_FRAME);
         refs.wrapper!.style.opacity = "1";
       });
     });
@@ -306,24 +358,48 @@ export function RaceCanvas({
         const msSinceFinish = engine.finishedAtMs !== null ? elapsed - engine.finishedAtMs : 0;
         const overshoot = engine.finished ? overshootPx(msSinceFinish) : 0;
 
-        // Subtle bob (2-4px) and an accel-based lean, both derived purely
-        // from elapsed time and current velocity — never randomly jittered
-        // frame to frame.
-        const bobPx = engine.finished ? 0 : Math.sin(elapsed * 0.012 + hashPhase(pos.teamId)) * 3 + 3;
-        const leanDeg = engine.finished ? 0 : clamp(pos.velocity * 40_000, -6, 10);
+        // Body bob, a small per-runner gait wobble, and an accel-based
+        // lean — all derived purely from elapsed time and current
+        // velocity, never randomly jittered frame to frame (that's what
+        // keeps a replay pixel-identical to the live race). Both the bob's
+        // frequency and its amplitude vary per runner via a second hash,
+        // so twelve runners never bob in lockstep even at identical speed.
+        const phase = hashPhase(pos.teamId);
+        const variance = hashVariance(pos.teamId);
+        const bobFreq = 0.0105 + variance * 0.005;
+        const bobAmp = 2.6 + variance * 1.8;
+        const bobPx = engine.finished ? 0 : Math.sin(elapsed * bobFreq + phase) * bobAmp + bobAmp;
+        // A slow secondary oscillation on the torso angle, on top of the
+        // velocity-driven lean, so the stride reads as alive rather than
+        // rigid while a runner holds a steady pace.
+        const gaitWobbleDeg = engine.finished
+          ? 0
+          : Math.sin(elapsed * bobFreq * 0.5 + phase * 1.7) * (0.9 + variance * 0.8);
+        const leanDeg = engine.finished ? 0 : clamp(pos.velocity * 40_000, -6, 10) + gaitWobbleDeg;
 
         refs.wrapper.style.transform =
           `translate3d(${baseX + overshoot}px, ${-bobPx}px, 0) rotate(${leanDeg}deg)`;
 
         if (refs.shadow) {
-          const shadowScale = clamp(1 - bobPx / 14, 0.72, 1);
-          refs.shadow.style.transform = `scaleX(${shadowScale}) scaleY(${shadowScale * 0.6})`;
-          refs.shadow.style.opacity = String(clamp(shadowScale, 0.25, 0.55));
+          // Shadow tightens and darkens as the runner rises, mimicking the
+          // contact shadow of an actual footfall.
+          const shadowScale = clamp(1 - bobPx / 13, 0.66, 1);
+          refs.shadow.style.transform = `scaleX(${shadowScale}) scaleY(${shadowScale * 0.55})`;
+          refs.shadow.style.opacity = String(clamp(shadowScale * 0.62, 0.2, 0.58));
         }
 
         if (refs.streak) {
+          // Threshold lowered from 0.55 so the streak is actually visible
+          // through most of a normal stride rather than only during rare
+          // top-speed surges, and it fades out entirely once finished.
           const speedNorm = clamp(pos.velocity * 60_000, 0, 1);
-          refs.streak.style.opacity = speedNorm > 0.55 ? String((speedNorm - 0.55) / 0.45) : "0";
+          const streakOpacity = engine.finished
+            ? 0
+            : speedNorm > 0.3
+              ? clamp((speedNorm - 0.3) / 0.5, 0, 0.85)
+              : 0;
+          refs.streak.style.opacity = String(streakOpacity);
+          refs.streak.style.transform = `translateY(-50%) scaleX(${0.7 + speedNorm * 0.6})`;
         }
 
         // Sprite run-cycle: pause on Contact before the runner has actually
@@ -334,12 +410,12 @@ export function RaceCanvas({
         if (engine.finished) {
           const finishPose = hashPhase(pos.teamId) < Math.PI ? CONTACT_FRAME : RECOVERY_FRAME;
           if (engine.lastSpriteFrame !== finishPose) {
-            setSpriteFrame(refs.sprite, finishPose, size);
+            setSpriteFrame(refs.sprite, finishPose);
             engine.lastSpriteFrame = finishPose;
           }
         } else if (elapsed < PREROLL_MS || pos.progress <= 0) {
           if (engine.lastSpriteFrame !== CONTACT_FRAME) {
-            setSpriteFrame(refs.sprite, CONTACT_FRAME, size);
+            setSpriteFrame(refs.sprite, CONTACT_FRAME);
             engine.lastSpriteFrame = CONTACT_FRAME;
           }
         } else {
@@ -348,7 +424,7 @@ export function RaceCanvas({
           engine.spritePhase += (dtMs / 1000) * fps;
           const frame = Math.floor(engine.spritePhase) % SHEET_FRAME_COUNT;
           if (frame !== engine.lastSpriteFrame) {
-            setSpriteFrame(refs.sprite, frame, size);
+            setSpriteFrame(refs.sprite, frame);
             engine.lastSpriteFrame = frame;
           }
         }
@@ -390,22 +466,24 @@ export function RaceCanvas({
       {phase === "preroll" && !reducedMotion && mode.mode !== "idle" && <ReadySetGo />}
 
       {/* Shared field turf — one continuous background behind every lane
-          (and the number strip above them), not repeated per row. */}
+          (and the number strip above them), not repeated per row. Split
+          across three stacked layers so that only the grain can drift;
+          see the layer notes at the top of this file. */}
       <div
         aria-hidden="true"
         className="pointer-events-none rounded-md bg-turf-700"
-        style={{ gridColumn: 2, gridRow: `1 / span ${totalRows}` }}
+        style={{ gridColumn: 2, gridRow: `1 / span ${totalRows}`, ...TURF_BASE_STYLE }}
+      />
+      <div
+        aria-hidden="true"
+        className="turf-grain pointer-events-none rounded-md"
+        style={{ gridColumn: 2, gridRow: `1 / span ${totalRows}`, ...TURF_GRAIN_STYLE }}
       />
       <div
         ref={trackRef}
         aria-hidden="true"
         className="pointer-events-none rounded-md"
-        style={{ gridColumn: 2, gridRow: `1 / span ${totalRows}`, ...FIELD_TEXTURE_STYLE }}
-      />
-      <div
-        aria-hidden="true"
-        className="pointer-events-none rounded-md"
-        style={{ gridColumn: 2, gridRow: `1 / span ${totalRows}`, ...HASH_MARKS_STYLE }}
+        style={{ gridColumn: 2, gridRow: `1 / span ${totalRows}`, ...FIELD_LINES_STYLE }}
       />
 
       {/* Yard numbers live in their own slim strip above the lanes — never
@@ -415,7 +493,7 @@ export function RaceCanvas({
         <div
           key={i}
           aria-hidden="true"
-          className={`pointer-events-none flex items-center justify-center font-display text-[clamp(0.6rem,2.1vw,0.9rem)] text-chalk/40 ${
+          className={`pointer-events-none flex items-center justify-center font-display text-[clamp(0.6rem,2.1vw,0.9rem)] tracking-wider text-chalk/25 ${
             marker.mobile ? "" : "hidden sm:flex"
           }`}
           style={{
@@ -438,8 +516,7 @@ export function RaceCanvas({
         style={{
           gridColumn: 3,
           gridRow: `1 / span ${totalRows}`,
-          backgroundImage:
-            "linear-gradient(180deg, color-mix(in srgb, var(--color-endzone-700) 38%, transparent) 0%, transparent 28%, transparent 72%, color-mix(in srgb, var(--color-endzone-700) 38%, transparent) 100%)",
+          ...ENDZONE_TURF_STYLE,
         }}
       >
         <span
@@ -480,9 +557,16 @@ export function RaceCanvas({
             <div
               ref={(el) => {
                 getRefs(team.id).wrapper = el;
+                // The first lane's wrapper doubles as the size probe for
+                // the sprite-sheet background-size math.
+                if (index === 0) runnerMeasureRef.current = el;
               }}
-              className="runner-wrapper absolute top-1/2 z-10 h-[clamp(2.5rem,7vw,3.5rem)] w-[clamp(2.5rem,7vw,3.5rem)] -translate-y-1/2 will-change-transform"
-              style={{ transform: "translate3d(-40px, 0, 0)" }}
+              className="runner-wrapper absolute top-1/2 z-10 -translate-y-1/2 will-change-transform"
+              style={{
+                width: RUNNER_SIZE,
+                height: RUNNER_SIZE,
+                transform: "translate3d(-40px, 0, 0)",
+              }}
             >
               <div
                 ref={(el) => {
@@ -509,7 +593,14 @@ export function RaceCanvas({
                 role="img"
                 aria-label={`${team.name} runner`}
                 className="relative h-full w-full bg-no-repeat drop-shadow-[0_2px_3px_rgba(0,0,0,0.5)]"
-                style={{ backgroundImage: `url(${team.sheet})` }}
+                style={{
+                  backgroundImage: `url(${team.sheet})`,
+                  // N frames side by side, so one frame exactly fills the
+                  // element at any size; setSpriteFrame only moves
+                  // background-position from here. Resolution-independent,
+                  // so this never needs recalculating on resize.
+                  backgroundSize: `${SHEET_FRAME_COUNT * 100}% 100%`,
+                }}
               />
             </div>
           </div>
@@ -536,10 +627,23 @@ export function RaceCanvas({
   );
 }
 
-function setSpriteFrame(sprite: HTMLDivElement, frame: number, sizePx: number) {
-  const sheetWidth = sizePx * SHEET_FRAME_COUNT;
-  sprite.style.backgroundSize = `${sheetWidth}px ${sizePx}px`;
-  sprite.style.backgroundPosition = `-${frame * sizePx}px 0px`;
+/**
+ * Selects one frame of the run cycle using percentage positioning rather
+ * than pixel offsets.
+ *
+ * The sheet is laid out as N frames side by side, so sizing the background
+ * to (N * 100%) makes exactly one frame fill the element at any size. With
+ * that sizing, background-position-x of P% aligns the image's P% point to
+ * the element's P% point, which works out to frame index N / (count - 1).
+ *
+ * Doing it this way keeps the sprite pixel-exact at every viewport width
+ * for free. The previous pixel-based version had to be fed a measured
+ * element size, and RUNNER_SIZE is a fluid clamp() that lands on
+ * fractional widths (e.g. 64.5px) — rounding that to an integer left a
+ * sub-pixel sliver of the neighbouring frame bleeding into view.
+ */
+function setSpriteFrame(sprite: HTMLDivElement, frame: number) {
+  sprite.style.backgroundPosition = `${(frame / (SHEET_FRAME_COUNT - 1)) * 100}% 0%`;
 }
 
 /** Deterministic per-runner phase offset so bob cycles don't all move in lockstep. */
@@ -547,6 +651,18 @@ function hashPhase(teamId: string): number {
   let hash = 0;
   for (let i = 0; i < teamId.length; i++) hash = (hash * 31 + teamId.charCodeAt(i)) | 0;
   return (hash >>> 0) % 628 / 100; // 0..2π-ish
+}
+
+/**
+ * Second, independent per-runner value in 0..1 — drives gait frequency and
+ * amplitude. Uses a different multiplier/offset from hashPhase so two
+ * runners that happen to collide on phase still differ in cadence, rather
+ * than the whole field falling into visible lockstep.
+ */
+function hashVariance(teamId: string): number {
+  let hash = 7;
+  for (let i = 0; i < teamId.length; i++) hash = (hash * 131 + teamId.charCodeAt(i) * 17) | 0;
+  return ((hash >>> 0) % 1000) / 1000;
 }
 
 function ReadySetGo() {

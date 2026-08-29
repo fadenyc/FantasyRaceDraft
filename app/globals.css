@@ -132,6 +132,26 @@ body::before {
   animation: float-up 2.2s ease-out forwards;
 }
 
+/*
+ * Barely-perceptible turf drift. The grain tile is 8px, and this shifts by
+ * exactly 48px (6 tiles) over 9s, so the loop is seamless — no visible
+ * jump at the wrap. Applied ONLY to the grain layer: the yard lines and
+ * hash marks live on their own static element, so they never slide, which
+ * is what keeps this reading as depth rather than a conveyor belt.
+ */
+@keyframes turf-drift {
+  from {
+    background-position: 0 0, 0 0;
+  }
+  to {
+    background-position: -48px 0, -48px 0;
+  }
+}
+
+.turf-grain {
+  animation: turf-drift 9s linear infinite;
+}
+
 @keyframes lane-finish-highlight {
   0% {
     background-color: color-mix(in srgb, var(--color-gold-500) 35%, transparent);
@@ -229,6 +249,7 @@ body::before {
 @media (prefers-reduced-motion: reduce) {
   .animate-float-up,
   .lane-finish-highlight,
+  .turf-grain,
   .ready-set-go .ready-text,
   .ready-set-go .set-text,
   .ready-set-go .go-text {
