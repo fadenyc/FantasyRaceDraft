@@ -31,7 +31,18 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     >
       <body className="min-h-full flex flex-col">
         {children}
-        <footer className="py-4 text-center text-xs text-chalk-faint">Design by FadeNYC</footer>
+        <footer className="flex flex-col items-center gap-2 py-4 text-center text-xs text-chalk-faint">
+          <a
+            href="https://buymeacoffee.com/fadenyc"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1.5 rounded-full border border-turf-700 bg-turf-800/50 px-3 py-1.5 text-chalk-muted transition-colors hover:border-gold-500/50 hover:text-gold-500"
+          >
+            <span aria-hidden="true">☕</span>
+            Buy me a coffee
+          </a>
+          <span>Design by FadeNYC</span>
+        </footer>
       </body>
     </html>
   );
