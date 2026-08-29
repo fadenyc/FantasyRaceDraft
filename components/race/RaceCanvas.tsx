@@ -77,14 +77,16 @@ const NAME_COL = "clamp(3.5rem, 19%, 8rem)";
 const ENDZONE_COL = "clamp(2.25rem, 11%, 4rem)";
 const RANK_COL = "clamp(1.75rem, 8%, 2.5rem)";
 const GRID_TEMPLATE_COLUMNS = `${NAME_COL} minmax(0, 1fr) ${ENDZONE_COL} ${RANK_COL}`;
-// Runner size, bumped ~15% from the previous clamp(2.5rem,7vw,3.5rem) so
-// the sprites read larger against the open field. Lane height tracks it
-// with a bit of breathing room so nothing feels cramped.
-const RUNNER_SIZE = "clamp(2.875rem, 8vw, 4rem)";
-const LANE_HEIGHT = "clamp(3.25rem, 9.25vw, 4.75rem)";
+// Runner size held close to its previous value — just enough smaller to
+// leave breathing room under the shorter lane height below.
+const RUNNER_SIZE = "clamp(2.75rem, 7.25vw, 3.625rem)";
+// Lane height cut ~16% across the clamp so the whole field is noticeably
+// shorter (keeps the post-race reactions/replay controls comfortably
+// on-screen) while staying tall enough for the runner, its shadow, and bob.
+const LANE_HEIGHT = "clamp(2.75rem, 7.75vw, 4rem)";
 // A slim dedicated row for the yard-number strip, separate from the lanes
 // entirely, so numbers never sit on top of a runner.
-const NUMBER_STRIP_HEIGHT = "1.375rem";
+const NUMBER_STRIP_HEIGHT = "1.25rem";
 
 // Yard markers as [value, xPercent]. The 50 sits centered; values count
 // back down toward the end zone on either side, matching a real field.
@@ -100,6 +102,28 @@ const YARD_MARKERS: { value: number; x: number; mobile: boolean }[] = [
   { value: 30, x: 75, mobile: false },
   { value: 20, x: 85, mobile: true },
   { value: 10, x: 95, mobile: false },
+];
+
+// One accent color per sprite sheet, cycling by index the same way the
+// sheet assignment itself does (index % length). Tints each runner's
+// motion trail to its own uniform color instead of a shared neutral
+// chalk/white streak. No per-sprite uniform-color data exists elsewhere in
+// the codebase (the colors live only inside the sprite artwork), so this
+// is a deliberately distinct 12-color palette rather than an attempt to
+// pixel-match every sheet.
+const STREAK_COLORS = [
+  "#4d7fe0", // team01 — navy/blue uniform
+  "#e0393e",
+  "#f2a71b",
+  "#2fa84f",
+  "#8b5cf6",
+  "#ff7a1a",
+  "#14b8a6",
+  "#c026d3",
+  "#7c8ba1",
+  "#eab308",
+  "#0ea5e9",
+  "#c81e4e",
 ];
 
 // The turf is built from three stacked layers, deliberately kept on
@@ -121,9 +145,10 @@ const TURF_BASE_STYLE: CSSProperties = {
     // Vertical depth: very slightly brighter through the middle of the
     // field, darker at the top and bottom edges.
     "linear-gradient(180deg, rgba(0,0,0,0.22) 0%, transparent 18%, transparent 82%, rgba(0,0,0,0.26) 100%)",
-    // Mowing stripes: alternating mown/unmown vertical bands, a touch
-    // stronger than before so the turf reads thicker.
-    "repeating-linear-gradient(90deg, color-mix(in srgb, var(--color-field-500) 10%, transparent) 0, color-mix(in srgb, var(--color-field-500) 10%, transparent) 5%, transparent 5%, transparent 10%)",
+    // Mowing stripes: alternating mown/unmown vertical bands. Contrast
+    // raised from 10% so the alternation actually reads against the dark
+    // turf rather than disappearing into a flat green.
+    "repeating-linear-gradient(90deg, color-mix(in srgb, var(--color-field-500) 16%, transparent) 0, color-mix(in srgb, var(--color-field-500) 16%, transparent) 5%, transparent 5%, transparent 10%)",
   ].join(", "),
   backgroundSize: "100% 100%, 100% 100%",
   backgroundRepeat: "no-repeat, no-repeat",
@@ -141,33 +166,45 @@ const TURF_GRAIN_STYLE: CSSProperties = {
   backgroundRepeat: "repeat, repeat",
 };
 
-// Major yard lines every 10% plus shorter hash-mark ticks near the top and
-// bottom edges. Static — never animated.
+// Major yard lines every 10% (matching YARD_MARKERS) plus short hash-mark
+// ticks near the top and bottom edges, one tick per yard line rather than a
+// continuous stripe. Static — never animated.
+//
+// The hash-mark layers previously repeated every 2% across an 11%-tall
+// band — 5 ticks per yard-line gap, at nearly full band height — which
+// read as a dense striped artifact along the top and bottom edges rather
+// than authentic hash marks. Matching their repeat period to the yard
+// lines (10%) and shrinking the band to a thin strip fixes that: one short
+// tick per yard line, not a wall of stripes.
 const FIELD_LINES_STYLE: CSSProperties = {
   backgroundImage: [
-    // Major yard lines.
+    // Major yard lines, full field height.
     "repeating-linear-gradient(90deg, transparent, transparent calc(10% - 1px), color-mix(in srgb, var(--color-chalk) 30%, transparent) calc(10% - 1px), color-mix(in srgb, var(--color-chalk) 30%, transparent) 10%)",
-    // Hash marks, top band.
-    "repeating-linear-gradient(90deg, transparent, transparent calc(2% - 1px), color-mix(in srgb, var(--color-chalk) 12%, transparent) calc(2% - 1px), color-mix(in srgb, var(--color-chalk) 12%, transparent) 2%)",
-    // Hash marks, bottom band.
-    "repeating-linear-gradient(90deg, transparent, transparent calc(2% - 1px), color-mix(in srgb, var(--color-chalk) 12%, transparent) calc(2% - 1px), color-mix(in srgb, var(--color-chalk) 12%, transparent) 2%)",
+    // Hash-mark ticks, top edge — one per yard line.
+    "repeating-linear-gradient(90deg, transparent, transparent calc(10% - 1.5px), color-mix(in srgb, var(--color-chalk) 24%, transparent) calc(10% - 1.5px), color-mix(in srgb, var(--color-chalk) 24%, transparent) 10%)",
+    // Hash-mark ticks, bottom edge — one per yard line.
+    "repeating-linear-gradient(90deg, transparent, transparent calc(10% - 1.5px), color-mix(in srgb, var(--color-chalk) 24%, transparent) calc(10% - 1.5px), color-mix(in srgb, var(--color-chalk) 24%, transparent) 10%)",
   ].join(", "),
-  backgroundSize: "100% 100%, 100% 11%, 100% 11%",
+  backgroundSize: "100% 100%, 100% 6%, 100% 6%",
   backgroundPosition: "0 0, 0 0, 0 100%",
   backgroundRepeat: "no-repeat, no-repeat, no-repeat",
 };
 
-// The end zone gets the same grain and mowing treatment at lower contrast
-// so it reads as a darker patch of the same field, not a UI sidebar.
+// The end zone reuses the exact same mowing-stripe and grain treatment as
+// the main field (TURF_BASE_STYLE / TURF_GRAIN_STYLE above), just under a
+// deeper dark wash — so it reads as one continuous turf that happens to be
+// shaded darker, not a separate orange-accented surface bolted onto the
+// side. No extra decoration beyond the goal line (its own border) and the
+// TOUCHDOWN label.
 const ENDZONE_TURF_STYLE: CSSProperties = {
   backgroundImage: [
-    // Restrained orange accents at the very top and bottom edges only.
-    "linear-gradient(180deg, color-mix(in srgb, var(--color-endzone-700) 40%, transparent) 0%, transparent 26%, transparent 74%, color-mix(in srgb, var(--color-endzone-700) 40%, transparent) 100%)",
-    "repeating-linear-gradient(72deg, color-mix(in srgb, var(--color-chalk) 3%, transparent) 0 1px, transparent 1px 4px)",
-    "repeating-linear-gradient(90deg, color-mix(in srgb, var(--color-field-500) 6%, transparent) 0, color-mix(in srgb, var(--color-field-500) 6%, transparent) 22%, transparent 22%, transparent 44%)",
+    "linear-gradient(180deg, rgba(0,0,0,0.42) 0%, rgba(0,0,0,0.24) 18%, rgba(0,0,0,0.24) 82%, rgba(0,0,0,0.46) 100%)",
+    "repeating-linear-gradient(90deg, color-mix(in srgb, var(--color-field-500) 16%, transparent) 0, color-mix(in srgb, var(--color-field-500) 16%, transparent) 5%, transparent 5%, transparent 10%)",
+    "repeating-linear-gradient(72deg, color-mix(in srgb, var(--color-chalk) 4%, transparent) 0 1px, transparent 1px 4px)",
+    "repeating-linear-gradient(-64deg, rgba(0,0,0,0.16) 0 1px, transparent 1px 5px)",
   ].join(", "),
-  backgroundSize: "100% 100%, 8px 8px, 100% 100%",
-  backgroundRepeat: "no-repeat, repeat, no-repeat",
+  backgroundSize: "100% 100%, 100% 100%, 8px 8px, 8px 8px",
+  backgroundRepeat: "no-repeat, no-repeat, repeat, repeat",
 };
 
 export interface RaceCanvasProps {
@@ -206,7 +243,12 @@ export function RaceCanvas({
   }, [onComplete]);
 
   const teamsWithSheet = useMemo(
-    () => teams.map((team, index) => ({ ...team, sheet: PLAYER_SHEETS[index % PLAYER_SHEETS.length] })),
+    () =>
+      teams.map((team, index) => ({
+        ...team,
+        sheet: PLAYER_SHEETS[index % PLAYER_SHEETS.length],
+        streakColor: STREAK_COLORS[index % STREAK_COLORS.length],
+      })),
     [teams],
   );
 
@@ -509,8 +551,9 @@ export function RaceCanvas({
       ))}
 
       {/* Shared end zone — one instance for the whole field, not per lane.
-          Dark surface with restrained orange top/bottom accents rather
-          than a bright full-fill wash, and a bold chalk goal line. */}
+          Same turf texture as the main field, just darker (ENDZONE_TURF_STYLE
+          above), with a single bold chalk goal line and no separate accent
+          colors or decoration. */}
       <div
         className="relative flex items-center justify-center overflow-hidden rounded-r-md border-l-4 border-chalk bg-turf-900"
         style={{
@@ -584,7 +627,14 @@ export function RaceCanvas({
                 // each frame across the run cycle) — right-full would sit
                 // flush with the wrapper's raw edge, leaving a visible
                 // gap between the streak and the visible character.
-                className="pointer-events-none absolute right-[72%] top-1/2 h-1.5 w-4 -translate-y-1/2 rounded-full bg-gradient-to-l from-chalk/70 to-transparent opacity-0 sm:w-6"
+                // Tinted per-team via inline style (see STREAK_COLORS)
+                // rather than a shared Tailwind gradient class, and
+                // lightly blurred so it reads as a soft trail rather than
+                // a hard-edged bar.
+                className="pointer-events-none absolute right-[72%] top-1/2 h-1.5 w-4 -translate-y-1/2 rounded-full opacity-0 blur-[1px] sm:w-6"
+                style={{
+                  backgroundImage: `linear-gradient(to left, color-mix(in srgb, ${team.streakColor} 75%, transparent), transparent)`,
+                }}
               />
               <div
                 ref={(el) => {
