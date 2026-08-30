@@ -11,17 +11,6 @@ const CHAT_HISTORY_LIMIT = 100;
  * regardless of how this data later gets passed into a client component.
  */
 
-export async function listPublicSeasons(): Promise<PublicSeason[]> {
-  const supabase = createServiceRoleClient();
-  const { data, error } = await supabase
-    .from("public_seasons")
-    .select("*")
-    .order("created_at", { ascending: false });
-
-  if (error) throw error;
-  return data as PublicSeason[];
-}
-
 export interface SeasonBundle {
   season: PublicSeason;
   teams: Team[];

@@ -72,10 +72,6 @@ export function computeRacePositions(
   });
 }
 
-export function isRaceComplete(elapsedMs: number, durationMs: number = RACE_DURATION_MS): boolean {
-  return elapsedMs >= durationMs;
-}
-
 /** Current standings a viewer would actually see, sorted by live position — never reads the predetermined order. */
 export function computeLiveStandings(positions: readonly RacePosition[]): string[] {
   return positions
